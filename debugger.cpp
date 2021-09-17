@@ -51,8 +51,7 @@ inline BOOL WINAPI EnumSourceFilesCallback(PSOURCEFILE pSourceFile,
 inline BOOL WINAPI EnumLinesCallback(PSRCCODEINFO LineInfo, PVOID UserContext) {
   Debugger *debugger = (Debugger *)UserContext;
 
-  debugger->lines[LineInfo->FileName].push_back(
-      {LineInfo->LineNumber, LineInfo->Address});
+  debugger->lines[LineInfo->Address] = LineInfo->LineNumber;
 
   return TRUE;
 }
@@ -100,12 +99,12 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
   return true;
 }
 
-static Breakpoint *CreateBreakpoint(HANDLE process, Line line) {
+static Breakpoint *CreateBreakpoint(HANDLE process, DWORD64 address) {
   Breakpoint *result = new Breakpoint;
 
   BYTE instruction;
   DWORD read_bytes;
-  if (!ReadProcessMemory(process, (void *)line.address, &instruction, 1,
+  if (!ReadProcessMemory(process, (void *)address, &instruction, 1,
                          &read_bytes)) {
     LOG(DebuggerProcessEvent)
         << "ReadProcessMemory failed, error = " << GetLastError() << '\n';
@@ -116,22 +115,18 @@ static Breakpoint *CreateBreakpoint(HANDLE process, Line line) {
   BYTE original_instruction = instruction;
 
   instruction = 0xcc;
-  WriteProcessMemory(process, (void *)line.address, &instruction, 1,
-                     &read_bytes);
-  FlushInstructionCache(process, (void *)line.address, 1);
+  WriteProcessMemory(process, (void *)address, &instruction, 1, &read_bytes);
+  FlushInstructionCache(process, (void *)address, 1);
 
   result->original_instruction = original_instruction;
-  result->line = line;
+  result->address = address;
 
   return result;
 }
 
 static bool DebuggerPrintRegisters(Debugger *debugger) {
   auto pi = debugger->pi;
-
-  CONTEXT context;
-  context.ContextFlags = CONTEXT_ALL;
-  GetThreadContext(pi.hThread, &context);
+  auto context = debugger->original_context;
 
   LOG(INFO) << "EAX = " << context.Eax << "\nEBX = " << context.Ebx
             << "\nECX = " << context.Ecx << '\n';
@@ -139,43 +134,31 @@ static bool DebuggerPrintRegisters(Debugger *debugger) {
   return true;
 }
 
-static bool DebuggerRemoveBreakpoint(Debugger *debugger, DWORD64 address,
-                                     bool reset_trap_flag) {
-  auto &breakpoints = debugger->breakpoints;
-  auto breakpoint = breakpoints[address];
+inline bool DebuggerRestoreInstruction(Debugger *debugger,
+                                       Breakpoint *breakpoint,
+                                       CONTEXT context) {
   auto pi = debugger->pi;
 
   // Restore EIP
-  CONTEXT context;
-  context.ContextFlags = CONTEXT_ALL;
-  GetThreadContext(pi.hThread, &context);
-
   --context.Eip;
-  if (reset_trap_flag) context.EFlags |= 0x100;  // Trap flag
+  context.EFlags |= 0x100;  // Trap flag
   SetThreadContext(pi.hThread, &context);
 
   // Restore original instruction
   DWORD read_bytes;
-  if (!WriteProcessMemory(pi.hProcess, (void *)breakpoint->line.address,
+  if (!WriteProcessMemory(pi.hProcess, (void *)breakpoint->address,
                           &breakpoint->original_instruction, 1, &read_bytes)) {
     LOG(DebuggerRemoveBreakpoint)
         << "WriteProcessMemory failed, error = " << GetLastError() << '\n';
     return false;
   }
 
-  // Delete breakpoint
-  breakpoints.erase(address);
-  delete breakpoint;
-
   return true;
 }
 
 static bool DebuggerPrintCallstack(Debugger *debugger) {
   auto pi = debugger->pi;
-
-  CONTEXT context;
-  context.ContextFlags = CONTEXT_ALL;
-  GetThreadContext(pi.hThread, &context);
+  auto context = debugger->original_context;
 
   STACKFRAME64 stack = {};
   stack.AddrPC.Offset = context.Eip;
@@ -232,28 +215,28 @@ static bool DebuggerPrintCallstack(Debugger *debugger) {
   return true;
 }
 
-inline DWORD DebuggerGetLineNumberFromAddress(Debugger *debugger,
-                                              DWORD64 address) {
+static bool DebuggerStepOver(Debugger *debugger) {
+  auto pi = debugger->pi;
   const auto &lines = debugger->lines;
-  const auto &source_files = debugger->source_files;
+  auto &breakpoints = debugger->breakpoints;
+  auto context = debugger->original_context;
 
-  for (int i = 0; i < source_files.size(); ++i) {
-    auto it = lines.find(source_files[i]);
-    for (int j = 0; j < it->second.size(); ++j) {
-      DWORD64 temp_address = it->second[j].address;
-      if (temp_address == address) {
-        return it->second[j].line_number;
-      }
-    }
-  }
+  auto current_line = lines.find(context.Eip - 1);
+  ++current_line;
 
-  return NULL;
+  Breakpoint *breakpoint = CreateBreakpoint(pi.hProcess, current_line->first);
+  breakpoints[current_line->first] = breakpoint;
+
+  return true;
 }
 
 static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
                                  DWORD &continue_status) {
   auto pi = debugger->pi;
   auto &breakpoints = debugger->breakpoints;
+  auto &lines = debugger->lines;
+
+  continue_status = DBG_CONTINUE;
 
   switch (debug_event.dwDebugEventCode) {
     case LOAD_DLL_DEBUG_EVENT: {
@@ -276,15 +259,11 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
       DWORD start_address =
           DebuggerGetTargetStartAddress(pi.hProcess, pi.hThread);
 
-      DWORD line_number =
-          DebuggerGetLineNumberFromAddress(debugger, start_address);
+      DWORD line_number = lines[start_address];
 
-      Breakpoint *breakpoint =
-          CreateBreakpoint(pi.hProcess, Line{line_number, start_address});
+      Breakpoint *breakpoint = CreateBreakpoint(pi.hProcess, start_address);
 
       breakpoints[start_address] = breakpoint;
-
-      continue_status = DBG_CONTINUE;
     } break;
     case OUTPUT_DEBUG_STRING_EVENT: {
       const OUTPUT_DEBUG_STRING_INFO output_debug_string_info =
@@ -305,14 +284,11 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         // LOG(OUTPUT_DEBUG_STRING_EVENT, message); // Output to console is not
         // supported for now (cause i'm dumb) :(
       }
-
-      continue_status = DBG_CONTINUE;
     } break;
     case EXCEPTION_DEBUG_EVENT: {
       const EXCEPTION_DEBUG_INFO &exception_debug_info =
           debug_event.u.Exception;
-      DWORD exception_code = exception_debug_info.ExceptionRecord.ExceptionCode;
-      switch (exception_code) {
+      switch (exception_debug_info.ExceptionRecord.ExceptionCode) {
         case EXCEPTION_BREAKPOINT: {
           static bool ignore_breakpoint = true;
           if (ignore_breakpoint) {
@@ -323,26 +299,38 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
                 << exception_debug_info.ExceptionRecord.ExceptionAddress
                 << '\n';
 
-            DebuggerRemoveBreakpoint(
-                debugger,
-                (DWORD64)exception_debug_info.ExceptionRecord.ExceptionAddress,
-                true);
+            Breakpoint *breakpoint =
+                breakpoints[(DWORD64)exception_debug_info.ExceptionRecord
+                                .ExceptionAddress];
 
-            DebuggerPrintRegisters(debugger);
-            DebuggerPrintCallstack(debugger);
+            CONTEXT context;
+            context.ContextFlags = CONTEXT_ALL;
+            GetThreadContext(pi.hThread, &context);
+
+            debugger->original_context = context;
+
+            DebuggerRestoreInstruction(debugger, breakpoint, context);
           }
-
-          continue_status = DBG_CONTINUE;
         } break;
         case EXCEPTION_SINGLE_STEP: {
-          // Breakpoint *breakpoint = CreateBreakpoint(
-          //     pi.hProcess,
-          //     (DWORD)exception_debug_info.ExceptionRecord.ExceptionAddress);
+          DebuggerPrintRegisters(debugger);
+          DebuggerPrintCallstack(debugger);
 
-          // breakpoints[0] = breakpoint;
-          int a = 10;
+          // Rewrite exception
+          BYTE instruction = 0xcc;
+          DWORD read_bytes;
+          if (!WriteProcessMemory(pi.hProcess,
+                                  (void *)(debugger->original_context.Eip - 1),
+                                  &instruction, 1, &read_bytes)) {
+            LOG(DebuggerProcessEvent)
+                << "WriteProcessMemory failed, error = " << GetLastError()
+                << '\n';
+            return false;
+          }
 
-          continue_status = DBG_CONTINUE;
+          // TODO: Wait for user input
+          // NOTE: Test
+          DebuggerStepOver(debugger);
         } break;
         default:
           if (exception_debug_info.dwFirstChance == 1) {
@@ -366,7 +354,9 @@ static bool DebuggerRun(Debugger *debugger) {
     if (!WaitForDebugEvent(&debug_event, INFINITE)) return 1;
 
     DWORD continue_status;
-    DebuggerProcessEvent(debugger, debug_event, continue_status);
+    if (!DebuggerProcessEvent(debugger, debug_event, continue_status)) {
+      return false;
+    }
     ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId,
                        continue_status);
   }
