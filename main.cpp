@@ -14,30 +14,23 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  UserInterface *user_interface = CreateUserInterface(continue_event);
+  Debugger debugger = CreateDebugger(argv[1], continue_event);
+  UserInterface user_interface = CreateUserInterface();
+  user_interface.step_over_callback = [&](){
+    DebuggerStepOver(&debugger);
 
-  Debugger *debugger;
+    SetEvent(continue_event);
+  };
+  user_interface.print_callstack_callback = [&]() {
+    DebuggerPrintCallstack(&debugger);
+  };
+  user_interface.print_registers_callback = [&]() {
+    DebuggerPrintRegisters(&debugger);
+  };
+
   std::thread([&]() {
-    debugger = CreateDebugger(argv[1], continue_event);
-    DebuggerRun(debugger);
+    UserInterfaceRun(&user_interface);
   }).detach();
 
-  std::string input = {};
-  while (true) {
-    std::getline(std::cin, input);
-
-    if (input == "aight") {
-      break;
-    } else if (input == "step_over") {
-      DebuggerStepOver(debugger);
-
-      SetEvent(continue_event);
-    } else if (input == "callstack") {
-      DebuggerPrintCallstack(debugger);
-    } else if (input == "registers") {
-      DebuggerPrintRegisters(debugger);
-    }
-
-    Sleep(100);
-  }
+  DebuggerRun(&debugger);
 }

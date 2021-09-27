@@ -1,5 +1,5 @@
-static Debugger *CreateDebugger(const std::string &process_name, HANDLE continue_event) {
-  Debugger *result = new Debugger;
+static Debugger CreateDebugger(const std::string &process_name, HANDLE continue_event) {
+  Debugger result;
 
   STARTUPINFO si = {};
   PROCESS_INFORMATION pi = {};
@@ -7,20 +7,18 @@ static Debugger *CreateDebugger(const std::string &process_name, HANDLE continue
                       DEBUG_ONLY_THIS_PROCESS, NULL, NULL, &si, &pi)) {
     LOG(CreateDebugger) << "CreateProcessA failed, error = " << GetLastError()
                         << '\n';
-    delete result;
-    return nullptr;
+    assert(false);
   }
 
   if (!SymInitialize(pi.hProcess, NULL, false)) {
     LOG(CreateDebugger) << "SymInitialize failed, error = " << GetLastError()
                         << '\n';
-    delete result;
-    return nullptr;
+    assert(false);
   }
 
-  result->si = si;
-  result->pi = pi;
-  result->continue_event = continue_event;
+  result.si = si;
+  result.pi = pi;
+  result.continue_event = continue_event;
 
   return result;
 }

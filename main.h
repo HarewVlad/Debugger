@@ -10,6 +10,8 @@
 #include <sstream>
 #include <iomanip>
 #include <thread>
+#include <functional>
+#include <assert.h>
 
 #define BUFSIZE 512
 
