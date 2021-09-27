@@ -1,4 +1,4 @@
-static Debugger *CreateDebugger(const std::string &process_name) {
+static Debugger *CreateDebugger(const std::string &process_name, HANDLE continue_event) {
   Debugger *result = new Debugger;
 
   STARTUPINFO si = {};
@@ -13,19 +13,20 @@ static Debugger *CreateDebugger(const std::string &process_name) {
 
   if (!SymInitialize(pi.hProcess, NULL, false)) {
     LOG(CreateDebugger) << "SymInitialize failed, error = " << GetLastError()
-                        << '!\n';
+                        << '\n';
     delete result;
     return nullptr;
   }
 
   result->si = si;
   result->pi = pi;
+  result->continue_event = continue_event;
 
   return result;
 }
 
-inline DWORD DebuggerGetTargetStartAddress(HANDLE process, HANDLE thread) {
-  DWORD result = 0;
+inline DWORD64 DebuggerGetTargetStartAddress(HANDLE process, HANDLE thread) {
+  DWORD64 result = 0;
 
   SYMBOL_INFO *symbol;
   symbol = (SYMBOL_INFO *)new BYTE[sizeof(SYMBOL_INFO) + MAX_SYM_NAME];
@@ -51,6 +52,8 @@ inline BOOL WINAPI EnumSourceFilesCallback(PSOURCEFILE pSourceFile,
 inline BOOL WINAPI EnumLinesCallback(PSRCCODEINFO LineInfo, PVOID UserContext) {
   Debugger *debugger = (Debugger *)UserContext;
 
+  // LOG(INFO) << "Module: " << LineInfo->FileName << " - Line: " << LineInfo->LineNumber 
+  // << " - Address: " << std::dec << LineInfo->Address << '\n';
   debugger->lines[LineInfo->Address] = LineInfo->LineNumber;
 
   return TRUE;
@@ -152,6 +155,7 @@ inline bool DebuggerRestoreInstruction(Debugger *debugger,
         << "WriteProcessMemory failed, error = " << GetLastError() << '\n';
     return false;
   }
+  FlushInstructionCache(pi.hProcess, (void *)breakpoint->address, 1);
 
   return true;
 }
@@ -256,10 +260,10 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
 
       // Replace first instruction with int3
 
-      DWORD start_address =
-          DebuggerGetTargetStartAddress(pi.hProcess, pi.hThread);
 
-      DWORD line_number = lines[start_address];
+      DWORD64 start_address =
+          DebuggerGetTargetStartAddress(pi.hProcess, pi.hThread);
+      auto line = lines[start_address];
 
       Breakpoint *breakpoint = CreateBreakpoint(pi.hProcess, start_address);
 
@@ -313,10 +317,7 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
           }
         } break;
         case EXCEPTION_SINGLE_STEP: {
-          DebuggerPrintRegisters(debugger);
-          DebuggerPrintCallstack(debugger);
-
-          // Rewrite exception
+          // Reinstall exception
           BYTE instruction = 0xcc;
           DWORD read_bytes;
           if (!WriteProcessMemory(pi.hProcess,
@@ -327,10 +328,10 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
                 << '\n';
             return false;
           }
+          FlushInstructionCache(pi.hProcess, (void *)(debugger->original_context.Eip - 1), 1);
 
-          // TODO: Wait for user input
-          // NOTE: Test
-          DebuggerStepOver(debugger);
+          // Step over / print registers / print callstack
+          WaitForSingleObject(debugger->continue_event, INFINITE);
         } break;
         default:
           if (exception_debug_info.dwFirstChance == 1) {

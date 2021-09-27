@@ -10,4 +10,6 @@ struct Debugger {
   std::vector<std::string> source_files;
   std::map<DWORD64, int> lines; // Address, Line number
   CONTEXT original_context;
+  HANDLE continue_event;
+  DWORD64 main_return_address; // To halt debugging when this address is being hit
 };

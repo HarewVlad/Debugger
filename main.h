@@ -9,6 +9,7 @@
 #include <map>
 #include <sstream>
 #include <iomanip>
+#include <thread>
 
 #define BUFSIZE 512
 
@@ -18,3 +19,4 @@
 #define LOG(TYPE) std::cout << #TYPE << ": "
 
 #include "debugger.h"
+#include "interface.h"
