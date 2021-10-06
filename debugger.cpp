@@ -1,4 +1,5 @@
-static Debugger CreateDebugger(const std::string &process_name, HANDLE continue_event) {
+static Debugger CreateDebugger(const std::string &process_name,
+                               HANDLE continue_event) {
   Debugger result;
 
   STARTUPINFO si = {};
@@ -21,6 +22,24 @@ static Debugger CreateDebugger(const std::string &process_name, HANDLE continue_
   result.continue_event = continue_event;
 
   return result;
+}
+
+inline DWORD64 DebuggerGetTargetEndAddress(CONTEXT &context,
+                                           PROCESS_INFORMATION &pi) {
+  STACKFRAME64 stack = {};
+  stack.AddrPC.Offset = context.Eip;
+  stack.AddrPC.Mode = AddrModeFlat;
+  stack.AddrFrame.Offset = context.Ebp;
+  stack.AddrFrame.Mode = AddrModeFlat;
+  stack.AddrStack.Offset = context.Esp;
+  stack.AddrStack.Mode = AddrModeFlat;
+  if (!StackWalk64(IMAGE_FILE_MACHINE_I386, pi.hProcess, pi.hThread, &stack,
+                   &context, NULL, SymFunctionTableAccess64, SymGetModuleBase64,
+                   0)) {
+    return NULL;
+  }
+
+  return stack.AddrReturn.Offset + 0x5;  // ?
 }
 
 inline DWORD64 DebuggerGetTargetStartAddress(HANDLE process, HANDLE thread) {
@@ -50,8 +69,9 @@ inline BOOL WINAPI EnumSourceFilesCallback(PSOURCEFILE pSourceFile,
 inline BOOL WINAPI EnumLinesCallback(PSRCCODEINFO LineInfo, PVOID UserContext) {
   Debugger *debugger = (Debugger *)UserContext;
 
-  // LOG(INFO) << "Module: " << LineInfo->FileName << " - Line: " << LineInfo->LineNumber 
-  // << " - Address: " << std::dec << LineInfo->Address << '\n';
+  // LOG(INFO) << "Module: " << LineInfo->FileName << " - Line: " << std::dec <<
+  // LineInfo->LineNumber
+  //<< " - Address: " << std::hex << LineInfo->Address << '\n';
   debugger->lines[LineInfo->Address] = LineInfo->LineNumber;
 
   return TRUE;
@@ -72,7 +92,7 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
                                  NULL, NULL);
   if (!base) {
     LOG(DebuggerProcessEvent)
-        << "SymLoadModuleEx failed, error = " << GetLastError() << '!\n';
+        << "SymLoadModuleEx failed, error = " << GetLastError() << "!\n";
     return false;
   }
 
@@ -85,7 +105,7 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
                                                 : "\n");
 
     if (module_info.SymType == SymPdb) {
-      SymEnumSourceFiles(pi.hProcess, base, "*.cpp", EnumSourceFilesCallback,
+      SymEnumSourceFiles(pi.hProcess, base, NULL, EnumSourceFilesCallback,
                          debugger);
       for (int i = 0; i < debugger->source_files.size(); ++i) {
         SymEnumLines(pi.hProcess, base, NULL, debugger->source_files[i].c_str(),
@@ -221,13 +241,14 @@ static bool DebuggerStepOver(Debugger *debugger) {
   auto pi = debugger->pi;
   const auto &lines = debugger->lines;
   auto &breakpoints = debugger->breakpoints;
-  auto context = debugger->original_context;
+  const auto &current_line_address = debugger->current_line_address;
 
-  auto current_line = lines.find(context.Eip - 1);
-  ++current_line;
+  auto current_line_it = lines.find(current_line_address);
+  ++current_line_it;
 
-  Breakpoint *breakpoint = CreateBreakpoint(pi.hProcess, current_line->first);
-  breakpoints[current_line->first] = breakpoint;
+  Breakpoint *breakpoint =
+      CreateBreakpoint(pi.hProcess, current_line_it->first);
+  breakpoints[current_line_it->first] = breakpoint;
 
   return true;
 }
@@ -258,14 +279,14 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
 
       // Replace first instruction with int3
 
-
-      DWORD64 start_address =
+      debugger->start_address =
           DebuggerGetTargetStartAddress(pi.hProcess, pi.hThread);
-      auto line = lines[start_address];
+      debugger->current_line_address = debugger->start_address;
 
-      Breakpoint *breakpoint = CreateBreakpoint(pi.hProcess, start_address);
+      Breakpoint *breakpoint =
+          CreateBreakpoint(pi.hProcess, debugger->start_address);
 
-      breakpoints[start_address] = breakpoint;
+      breakpoints[debugger->start_address] = breakpoint;
     } break;
     case OUTPUT_DEBUG_STRING_EVENT: {
       const OUTPUT_DEBUG_STRING_INFO output_debug_string_info =
@@ -296,18 +317,26 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
           if (ignore_breakpoint) {
             ignore_breakpoint = false;
           } else {
-            LOG(EXCEPTION_BREAKPOINT)
-                << "Breakpoint at address "
-                << exception_debug_info.ExceptionRecord.ExceptionAddress
-                << '\n';
+            DWORD64 exception_address =
+                (DWORD64)exception_debug_info.ExceptionRecord.ExceptionAddress;
 
-            Breakpoint *breakpoint =
-                breakpoints[(DWORD64)exception_debug_info.ExceptionRecord
-                                .ExceptionAddress];
+            LOG(DebuggerProcessEvent)
+                << "Breakpoint at (" << std::dec << lines[exception_address]
+                << ", " << std::hex << exception_address << ")\n";
 
             CONTEXT context;
             context.ContextFlags = CONTEXT_ALL;
             GetThreadContext(pi.hThread, &context);
+
+            if (exception_address == debugger->start_address) {
+              debugger->end_address = DebuggerGetTargetEndAddress(context, pi);
+
+              Breakpoint *breakpoint =
+                  CreateBreakpoint(pi.hProcess, debugger->end_address);
+              breakpoints[debugger->end_address] = breakpoint;
+            }
+
+            Breakpoint *breakpoint = breakpoints[exception_address];
 
             debugger->original_context = context;
 
@@ -326,7 +355,10 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
                 << '\n';
             return false;
           }
-          FlushInstructionCache(pi.hProcess, (void *)(debugger->original_context.Eip - 1), 1);
+          FlushInstructionCache(
+              pi.hProcess, (void *)(debugger->original_context.Eip - 1), 1);
+
+          debugger->current_line_address = debugger->original_context.Eip - 1;
 
           // Step over / print registers / print callstack
           WaitForSingleObject(debugger->continue_event, INFINITE);
@@ -338,6 +370,10 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
           continue_status = DBG_EXCEPTION_NOT_HANDLED;
           break;
       }
+    } break;
+    case EXIT_PROCESS_DEBUG_EVENT: {
+      LOG(DebuggerProcessEvent) << "Process is terminated, exiting ... \n";
+      exit(0);
     } break;
     default:
       continue_status = DBG_EXCEPTION_NOT_HANDLED;

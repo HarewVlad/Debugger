@@ -31,6 +31,6 @@ int main(int argc, char **argv) {
   std::thread([&]() {
     UserInterfaceRun(&user_interface);
   }).detach();
-
+  
   DebuggerRun(&debugger);
 }
