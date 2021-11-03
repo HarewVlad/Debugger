@@ -39,7 +39,7 @@ inline DWORD64 DebuggerGetTargetEndAddress(CONTEXT &context,
     return NULL;
   }
 
-  return stack.AddrReturn.Offset + 0x5;  // ?
+  return stack.AddrReturn.Offset + 0x5; // ?
 }
 
 inline DWORD64 DebuggerGetTargetStartAddress(HANDLE process, HANDLE thread) {
@@ -58,10 +58,12 @@ inline DWORD64 DebuggerGetTargetStartAddress(HANDLE process, HANDLE thread) {
   return result;
 }
 
-inline BOOL WINAPI EnumSourceFilesCallback(PSOURCEFILE pSourceFile,
+inline BOOL WINAPI EnumSourceFilesCallback(PSOURCEFILE SourceFile,
                                            PVOID UserContext) {
   Debugger *debugger = (Debugger *)UserContext;
-  debugger->source_files.push_back(pSourceFile->FileName);
+  // LOG(INFO) << "ModBase: " << std::hex << SourceFile->ModBase << ", Filename:
+  // " << SourceFile->FileName << '\n';
+  debugger->source_files.push_back(SourceFile->FileName);
 
   return TRUE;
 }
@@ -72,7 +74,16 @@ inline BOOL WINAPI EnumLinesCallback(PSRCCODEINFO LineInfo, PVOID UserContext) {
   // LOG(INFO) << "Module: " << LineInfo->FileName << " - Line: " << std::dec <<
   // LineInfo->LineNumber
   //<< " - Address: " << std::hex << LineInfo->Address << '\n';
-  debugger->lines[LineInfo->Address] = LineInfo->LineNumber;
+  debugger->address_to_line[LineInfo->Address] =
+      Line{LineInfo->LineNumber, LineInfo->FileName};
+
+  DWORD64 filename_line_hash =
+      GetStringDWORDHash(LineInfo->FileName, LineInfo->LineNumber);
+  debugger->filename_and_line_to_address[filename_line_hash] =
+      LineInfo->Address;
+
+  // TODO(Vlad): Do not store filename of line, create range of line addresses
+  // and use them to search for desired filename
 
   return TRUE;
 }
@@ -105,7 +116,7 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
                                                 : "\n");
 
     if (module_info.SymType == SymPdb) {
-      SymEnumSourceFiles(pi.hProcess, base, NULL, EnumSourceFilesCallback,
+      SymEnumSourceFiles(pi.hProcess, base, "*.[ic][np][lp?]", EnumSourceFilesCallback,
                          debugger);
       for (int i = 0; i < debugger->source_files.size(); ++i) {
         SymEnumLines(pi.hProcess, base, NULL, debugger->source_files[i].c_str(),
@@ -113,7 +124,7 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
       }
     }
   } else {
-    LOG(ERROR) << "Unable to load " << filename << '\n';
+    LOG(DebuggerLoadTargetModules) << "Unable to load " << filename << '\n';
     return false;
   }
 
@@ -162,7 +173,7 @@ inline bool DebuggerRestoreInstruction(Debugger *debugger,
 
   // Restore EIP
   --context.Eip;
-  context.EFlags |= 0x100;  // Trap flag
+  context.EFlags |= 0x100; // Trap flag
   SetThreadContext(pi.hThread, &context);
 
   // Restore original instruction
@@ -239,11 +250,11 @@ static bool DebuggerPrintCallstack(Debugger *debugger) {
 
 static bool DebuggerStepOver(Debugger *debugger) {
   auto pi = debugger->pi;
-  const auto &lines = debugger->lines;
+  const auto &address_to_line = debugger->address_to_line;
   auto &breakpoints = debugger->breakpoints;
   const auto &current_line_address = debugger->current_line_address;
 
-  auto current_line_it = lines.find(current_line_address);
+  auto current_line_it = address_to_line.find(current_line_address);
   ++current_line_it;
 
   Breakpoint *breakpoint =
@@ -253,131 +264,159 @@ static bool DebuggerStepOver(Debugger *debugger) {
   return true;
 }
 
+static bool DebuggerSetBreakpoint(Debugger *debugger,
+                                  const std::string &filename, DWORD line) {
+  const auto &filename_and_line_to_address =
+      debugger->filename_and_line_to_address;
+
+  DWORD64 filename_line_hash = GetStringDWORDHash(filename, line);
+  DWORD64 filename_line_hash_temp = GetStringDWORDHash(filename, line);
+  auto filename_and_line_to_address_it =
+      filename_and_line_to_address.find(filename_line_hash);
+  if (filename_and_line_to_address_it != filename_and_line_to_address.end()) {
+    Breakpoint *breakpoint = CreateBreakpoint(
+        debugger->pi.hProcess, filename_and_line_to_address_it->second);
+
+    debugger->breakpoints[filename_and_line_to_address_it->second] = breakpoint;
+  } else {
+    LOG(DebuggerSetBreakpoint) << "Unable to set breakpoint in \"" << filename
+                               << "\", for line: " << std::dec << line << '\n';
+
+    return false;
+  }
+
+  return true;
+}
+
 static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
                                  DWORD &continue_status) {
   auto pi = debugger->pi;
   auto &breakpoints = debugger->breakpoints;
-  auto &lines = debugger->lines;
+  auto &address_to_line = debugger->address_to_line;
 
   continue_status = DBG_CONTINUE;
 
   switch (debug_event.dwDebugEventCode) {
-    case LOAD_DLL_DEBUG_EVENT: {
-      const LOAD_DLL_DEBUG_INFO load_dll_debug_info = debug_event.u.LoadDll;
+  case LOAD_DLL_DEBUG_EVENT: {
+    const LOAD_DLL_DEBUG_INFO load_dll_debug_info = debug_event.u.LoadDll;
 
-      DebuggerLoadTargetModules(debugger, load_dll_debug_info.hFile,
-                                pi.hProcess,
-                                (DWORD64)load_dll_debug_info.lpBaseOfDll);
-    } break;
-    case CREATE_PROCESS_DEBUG_EVENT: {
-      const CREATE_PROCESS_DEBUG_INFO create_process_debug_info =
-          debug_event.u.CreateProcessInfo;
+    DebuggerLoadTargetModules(debugger, load_dll_debug_info.hFile, pi.hProcess,
+                              (DWORD64)load_dll_debug_info.lpBaseOfDll);
+  } break;
+  case CREATE_PROCESS_DEBUG_EVENT: {
+    const CREATE_PROCESS_DEBUG_INFO create_process_debug_info =
+        debug_event.u.CreateProcessInfo;
 
-      DebuggerLoadTargetModules(
-          debugger, create_process_debug_info.hFile, pi.hProcess,
-          (DWORD64)create_process_debug_info.lpBaseOfImage);
+    DebuggerLoadTargetModules(debugger, create_process_debug_info.hFile,
+                              pi.hProcess,
+                              (DWORD64)create_process_debug_info.lpBaseOfImage);
 
-      // Replace first instruction with int3
+    // Replace first instruction with int3
+    debugger->start_address =
+        DebuggerGetTargetStartAddress(pi.hProcess, pi.hThread);
+    debugger->current_line_address = debugger->start_address;
+    debugger->current_filename =
+        address_to_line[debugger->start_address].filename;
 
-      debugger->start_address =
-          DebuggerGetTargetStartAddress(pi.hProcess, pi.hThread);
-      debugger->current_line_address = debugger->start_address;
+    Breakpoint *breakpoint =
+        CreateBreakpoint(pi.hProcess, debugger->start_address);
 
-      Breakpoint *breakpoint =
-          CreateBreakpoint(pi.hProcess, debugger->start_address);
+    breakpoints[debugger->start_address] = breakpoint;
 
-      breakpoints[debugger->start_address] = breakpoint;
-    } break;
-    case OUTPUT_DEBUG_STRING_EVENT: {
-      const OUTPUT_DEBUG_STRING_INFO output_debug_string_info =
-          debug_event.u.DebugString;
-      WCHAR *message = new WCHAR[output_debug_string_info.nDebugStringLength];
+    DebuggerSetBreakpoint(debugger, "c:\\users\\vlad\\desktop\\debugger\\target\\target_include.cpp", 4);
+  } break;
+  case OUTPUT_DEBUG_STRING_EVENT: {
+    const OUTPUT_DEBUG_STRING_INFO output_debug_string_info =
+        debug_event.u.DebugString;
+    WCHAR *message = new WCHAR[output_debug_string_info.nDebugStringLength];
 
-      if (!ReadProcessMemory(
-              pi.hProcess, output_debug_string_info.lpDebugStringData, message,
-              output_debug_string_info.nDebugStringLength, NULL)) {
+    if (!ReadProcessMemory(pi.hProcess,
+                           output_debug_string_info.lpDebugStringData, message,
+                           output_debug_string_info.nDebugStringLength, NULL)) {
+      LOG(DebuggerProcessEvent)
+          << "ReadProcessMemory failed, error = " << GetLastError() << '\n';
+      return false;
+    }
+
+    if (!output_debug_string_info.fUnicode) {
+      LOG(OUTPUT_DEBUG_STRING_EVENT) << (char *)message << '\n';
+    } else {
+      // LOG(OUTPUT_DEBUG_STRING_EVENT, message); // Output to console is not
+      // supported for now (cause i'm dumb) :(
+    }
+  } break;
+  case EXCEPTION_DEBUG_EVENT: {
+    const EXCEPTION_DEBUG_INFO &exception_debug_info = debug_event.u.Exception;
+    switch (exception_debug_info.ExceptionRecord.ExceptionCode) {
+    case EXCEPTION_BREAKPOINT: {
+      static bool ignore_breakpoint = true;
+      if (ignore_breakpoint) {
+        ignore_breakpoint = false;
+      } else {
+        DWORD64 exception_address =
+            (DWORD64)exception_debug_info.ExceptionRecord.ExceptionAddress;
+
+        debugger->current_filename =
+            address_to_line[exception_address].filename;
+
         LOG(DebuggerProcessEvent)
-            << "ReadProcessMemory failed, error = " << GetLastError() << '\n';
+            << "Breakpoint at (" << debugger->current_filename << ", "
+            << std::dec << address_to_line[exception_address].index << ", "
+            << std::hex << exception_address << ")\n";
+
+        CONTEXT context;
+        context.ContextFlags = CONTEXT_ALL;
+        GetThreadContext(pi.hThread, &context);
+
+        if (exception_address == debugger->start_address) {
+          debugger->end_address = DebuggerGetTargetEndAddress(context, pi);
+
+          Breakpoint *breakpoint =
+              CreateBreakpoint(pi.hProcess, debugger->end_address);
+          breakpoints[debugger->end_address] = breakpoint;
+        }
+
+        Breakpoint *breakpoint = breakpoints[exception_address];
+
+        debugger->original_context = context;
+
+        DebuggerRestoreInstruction(debugger, breakpoint, context);
+      }
+    } break;
+    case EXCEPTION_SINGLE_STEP: {
+      // Reinstall exception
+      BYTE instruction = 0xcc;
+      DWORD read_bytes;
+      if (!WriteProcessMemory(pi.hProcess,
+                              (void *)(debugger->original_context.Eip - 1),
+                              &instruction, 1, &read_bytes)) {
+        LOG(DebuggerProcessEvent)
+            << "WriteProcessMemory failed, error = " << GetLastError() << '\n';
         return false;
       }
+      FlushInstructionCache(pi.hProcess,
+                            (void *)(debugger->original_context.Eip - 1), 1);
 
-      if (!output_debug_string_info.fUnicode) {
-        LOG(OUTPUT_DEBUG_STRING_EVENT) << (char *)message << '\n';
-      } else {
-        // LOG(OUTPUT_DEBUG_STRING_EVENT, message); // Output to console is not
-        // supported for now (cause i'm dumb) :(
-      }
-    } break;
-    case EXCEPTION_DEBUG_EVENT: {
-      const EXCEPTION_DEBUG_INFO &exception_debug_info =
-          debug_event.u.Exception;
-      switch (exception_debug_info.ExceptionRecord.ExceptionCode) {
-        case EXCEPTION_BREAKPOINT: {
-          static bool ignore_breakpoint = true;
-          if (ignore_breakpoint) {
-            ignore_breakpoint = false;
-          } else {
-            DWORD64 exception_address =
-                (DWORD64)exception_debug_info.ExceptionRecord.ExceptionAddress;
+      debugger->current_line_address = debugger->original_context.Eip - 1;
 
-            LOG(DebuggerProcessEvent)
-                << "Breakpoint at (" << std::dec << lines[exception_address]
-                << ", " << std::hex << exception_address << ")\n";
-
-            CONTEXT context;
-            context.ContextFlags = CONTEXT_ALL;
-            GetThreadContext(pi.hThread, &context);
-
-            if (exception_address == debugger->start_address) {
-              debugger->end_address = DebuggerGetTargetEndAddress(context, pi);
-
-              Breakpoint *breakpoint =
-                  CreateBreakpoint(pi.hProcess, debugger->end_address);
-              breakpoints[debugger->end_address] = breakpoint;
-            }
-
-            Breakpoint *breakpoint = breakpoints[exception_address];
-
-            debugger->original_context = context;
-
-            DebuggerRestoreInstruction(debugger, breakpoint, context);
-          }
-        } break;
-        case EXCEPTION_SINGLE_STEP: {
-          // Reinstall exception
-          BYTE instruction = 0xcc;
-          DWORD read_bytes;
-          if (!WriteProcessMemory(pi.hProcess,
-                                  (void *)(debugger->original_context.Eip - 1),
-                                  &instruction, 1, &read_bytes)) {
-            LOG(DebuggerProcessEvent)
-                << "WriteProcessMemory failed, error = " << GetLastError()
-                << '\n';
-            return false;
-          }
-          FlushInstructionCache(
-              pi.hProcess, (void *)(debugger->original_context.Eip - 1), 1);
-
-          debugger->current_line_address = debugger->original_context.Eip - 1;
-
-          // Step over / print registers / print callstack
-          WaitForSingleObject(debugger->continue_event, INFINITE);
-        } break;
-        default:
-          if (exception_debug_info.dwFirstChance == 1) {
-          }
-
-          continue_status = DBG_EXCEPTION_NOT_HANDLED;
-          break;
-      }
-    } break;
-    case EXIT_PROCESS_DEBUG_EVENT: {
-      LOG(DebuggerProcessEvent) << "Process is terminated, exiting ... \n";
-      exit(0);
+      // Wait for user events, like step_over and so on
+      WaitForSingleObject(debugger->continue_event, INFINITE);
     } break;
     default:
+      if (exception_debug_info.dwFirstChance == 1) {
+      }
+
       continue_status = DBG_EXCEPTION_NOT_HANDLED;
-      return true;
+      break;
+    }
+  } break;
+  case EXIT_PROCESS_DEBUG_EVENT: {
+    LOG(DebuggerProcessEvent) << "Process is terminated, exiting ... \n";
+    exit(0);
+  } break;
+  default:
+    continue_status = DBG_EXCEPTION_NOT_HANDLED;
+    return true;
   }
 
   return true;
@@ -386,7 +425,8 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
 static bool DebuggerRun(Debugger *debugger) {
   DEBUG_EVENT debug_event = {};
   while (true) {
-    if (!WaitForDebugEvent(&debug_event, INFINITE)) return 1;
+    if (!WaitForDebugEvent(&debug_event, INFINITE))
+      return 1;
 
     DWORD continue_status;
     if (!DebuggerProcessEvent(debugger, debug_event, continue_status)) {

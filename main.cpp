@@ -1,6 +1,9 @@
 #include "main.h"
 #include "utils.cpp"
 #include "debugger.cpp"
+#include "imgui/imgui.cpp"
+#include "imgui/imgui_impl_win32.cpp"
+#include "imgui/imgui_impl_dx11.cpp"
 #include "interface.cpp"
 
 int main(int argc, char **argv) {
@@ -26,6 +29,9 @@ int main(int argc, char **argv) {
   };
   user_interface.print_registers_callback = [&]() {
     DebuggerPrintRegisters(&debugger);
+  };
+  user_interface.set_breakpoint_callback = [&](const std::string& filename, DWORD line) {
+    DebuggerSetBreakpoint(&debugger, filename, line);
   };
 
   std::thread([&]() {

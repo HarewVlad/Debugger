@@ -68,3 +68,10 @@ static BOOL GetFileNameFromHandle(HANDLE hFile, TCHAR *pszFilename) {
   }
   return (bSuccess);
 }
+
+static DWORD64 GetStringDWORDHash(const std::string& string, DWORD64 dword) {
+  DWORD64 string_hash = std::hash<std::string>{}(string);
+  DWORD64 dword_hash = std::hash<DWORD>{}(dword);
+
+  return string_hash ^ dword_hash;
+}
