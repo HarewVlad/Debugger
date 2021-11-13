@@ -69,9 +69,23 @@ static BOOL GetFileNameFromHandle(HANDLE hFile, TCHAR *pszFilename) {
   return (bSuccess);
 }
 
+// TODO: Fix DWORD64 dword -> DWORD dword
 static DWORD64 GetStringDWORDHash(const std::string& string, DWORD64 dword) {
   DWORD64 string_hash = std::hash<std::string>{}(string);
   DWORD64 dword_hash = std::hash<DWORD>{}(dword);
 
   return string_hash ^ dword_hash;
+}
+
+static std::string GetFilenameFromPath(const std::string& path) {
+  std::string result;
+
+  if (!path.empty()) {
+    const size_t last_slash_index = path.find_last_of("\\/");
+    if (last_slash_index != std::string::npos) {
+      result = path.substr(last_slash_index + 1, path.length());
+    }
+  }
+
+  return result;
 }
