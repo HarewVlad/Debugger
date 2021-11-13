@@ -22,8 +22,8 @@ static Debugger CreateDebugger(const std::string &process_name,
   return result;
 }
 
-inline DWORD64 DebuggerGetTargetEndAddress(CONTEXT &context,
-                                           PROCESS_INFORMATION &pi) {
+inline DWORD64 DebuggetGetFunctionReturnAddress(CONTEXT &context,
+                                                PROCESS_INFORMATION &pi) {
   STACKFRAME64 stack = {};
   stack.AddrPC.Offset = context.Eip;
   stack.AddrPC.Mode = AddrModeFlat;
@@ -303,9 +303,8 @@ static bool DebuggerStepOver(Debugger *debugger) {
     invisible_breakpoints[current_line_it->first] =
         CreateBreakpoint(pi.hProcess, current_line_it->first);
   } else {
-    LOG_IMGUI(DebuggerStepOver, "Breakpoint \"",
-              current_line_it->second.filename, "\", ",
-              current_line_it->second.index, " already exists")
+    LOG_IMGUI(DebuggerStepOver, "Breakpoint \"", current_line_it->second.path,
+              "\", ", current_line_it->second.index, " already exists")
   }
 
   return true;
@@ -378,7 +377,12 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
     // Replace first instruction with int3
     debugger->start_address =
         DebuggerGetTargetStartAddress(pi.hProcess, pi.hThread);
-    debugger->current_line_address = debugger->start_address;
+
+    const Line &line = address_to_line[debugger->start_address];
+
+    if (debugger->OnLineIndexChange) {
+      debugger->OnLineIndexChange(line);
+    }
 
     invisible_breakpoints[debugger->start_address] =
         CreateBreakpoint(pi.hProcess, debugger->start_address);
@@ -414,18 +418,23 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         DWORD64 exception_address =
             (DWORD64)exception_debug_info.ExceptionRecord.ExceptionAddress;
 
-        LOG_IMGUI(DebuggerProcessEvent, "Breakpoint at (",
-                  address_to_line[exception_address].filename, ", ",
-                  address_to_line[exception_address].filename, ", ", std::dec,
-                  address_to_line[exception_address].index, ", ", std::hex,
-                  exception_address, ')');
+        const Line &line = address_to_line[exception_address];
+
+        LOG_IMGUI(DebuggerProcessEvent, "Breakpoint at (", line.path, ", ",
+                  std::dec, line.index, ", ", std::hex, exception_address, ')');
+
+        debugger->current_line_address = exception_address;
+
+        if (debugger->OnLineIndexChange) {
+          debugger->OnLineIndexChange(line);
+        }
 
         CONTEXT context;
         context.ContextFlags = CONTEXT_ALL;
         GetThreadContext(pi.hThread, &context);
 
         // Return address
-        debugger->end_address = DebuggerGetTargetEndAddress(context, pi);
+        debugger->end_address = DebuggetGetFunctionReturnAddress(context, pi);
         if (invisible_breakpoints.find(debugger->end_address) ==
             invisible_breakpoints.end()) {
           invisible_breakpoints[debugger->end_address] =
@@ -444,7 +453,7 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
 
         DebuggerRestoreInstruction(debugger, breakpoint, context);
 
-        // So it is a invisible breakpoint, need to delete
+        // So it is an invisible breakpoint, need to delete
         if (it == breakpoints.end()) {
           invisible_breakpoints.erase(it->first);
         }
@@ -467,8 +476,6 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         FlushInstructionCache(pi.hProcess,
                               (void *)(debugger->original_context.Eip - 1), 1);
       }
-
-      debugger->current_line_address = debugger->original_context.Eip - 1;
 
       // Wait for user events ("step over", "print callstack", ...)
       DebuggerWaitForAction(debugger);

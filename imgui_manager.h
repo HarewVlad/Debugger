@@ -18,6 +18,7 @@ struct ImGuiManager {
   std::unordered_map<std::string, std::vector<std::string>> path_to_source_code;
   std::unordered_map<std::string, std::string> path_to_filename;
   std::set<DWORD64> breakpoints;
+  Line current_line;
 };
 
 template <typename ... T>

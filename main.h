@@ -33,8 +33,8 @@ static bool Global_IsOpen = true;
 #include <d3d11.h>
 
 #include "directx11.h"
-#include "imgui_manager.h"
 #include "debugger.h"
+#include "imgui_manager.h"
 
 static ImGuiLog Global_ImGuiLog;
 

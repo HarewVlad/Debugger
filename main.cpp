@@ -36,7 +36,9 @@ int main(int argc, char **argv) {
       [&](const std::vector<std::string> &source_files) {
         ImGuiManagerLoadSourceFile(&imgui_manager, source_files);
       };
-
+  debugger.OnLineIndexChange = [&](const Line& line) {
+    imgui_manager.current_line = line;
+  };
   imgui_manager.OnStepOver = [&]() {
     DebuggerStepOver(&debugger);
 
@@ -44,7 +46,8 @@ int main(int argc, char **argv) {
   };
   imgui_manager.OnPrintCallstack = [&]() { DebuggerPrintCallstack(&debugger); };
   imgui_manager.OnPrintRegisters = [&]() { DebuggerPrintRegisters(&debugger); };
-  imgui_manager.OnSetBreakpoint = [&](const std::string &filename, DWORD line) -> bool {
+  imgui_manager.OnSetBreakpoint = [&](const std::string &filename,
+                                      DWORD line) -> bool {
     return DebuggerSetBreakpoint(&debugger, filename, line);
   };
   imgui_manager.OnRemoveBreakpoint = [&](const std::string &filename,

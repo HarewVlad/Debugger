@@ -17,6 +17,7 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
   const auto &path_to_source_code = imgui_manager->path_to_source_code;
   auto &breakpoints = imgui_manager->breakpoints;
   const auto &path_to_filename = imgui_manager->path_to_filename;
+  const auto &current_line = imgui_manager->current_line;
 
   ImGui::Begin("Code");
   ImGui::BeginTabBar("Files");
@@ -26,6 +27,7 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
     const std::string filename = path_to_filename.at(it->first);
     if (ImGui::BeginTabItem(filename.c_str())) {
       for (size_t i = 0; i < it->second.size(); ++i) {
+        // TODO: Precompute hash
         const DWORD64 filename_line_hash = GetStringDWORDHash(it->first, i + 1);
         static const float circle_offset_x = 17.0f;
         static const float line_number_offset_y = 2.5f;
@@ -34,6 +36,7 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
         ImGui::Text("%d", i + 1);
         ImGui::SameLine();
         if (breakpoints.find(filename_line_hash) != breakpoints.end()) {
+          // Draw debug cirle
           ImDrawList *draw_list = ImGui::GetWindowDrawList();
 
           draw_list->AddCircleFilled(
@@ -41,12 +44,19 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
               10, ImGui::GetColorU32(ImVec4(1, 0, 0, 1)), 10);
         }
 
+        // Cursor
+        float h = 4 / 7.0f;
+        if (current_line.path == it->first &&
+            current_line.index == i + 1) { // TODO: Cache
+          h = 8 / 7.0f;
+        }
+
         ImGui::PushStyleColor(ImGuiCol_Button,
-                              (ImVec4)ImColor::HSV(4 / 7.0f, 0.6f, 0.6f));
+                              (ImVec4)ImColor::HSV(h, 0.6f, 0.6f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                              (ImVec4)ImColor::HSV(4 / 7.0f, 0.7f, 0.7f));
+                              (ImVec4)ImColor::HSV(h, 0.7f, 0.7f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                              (ImVec4)ImColor::HSV(4 / 7.0f, 0.8f, 0.8f));
+                              (ImVec4)ImColor::HSV(h, 0.8f, 0.8f));
         ImGui::SameLine();
         ImGui::SetCursorPos({ImGui::GetCursorPosX() + circle_offset_x,
                              ImGui::GetCursorPosY() - line_number_offset_y});
@@ -97,7 +107,7 @@ inline void ImGuiManagerDrawInterface(ImGuiManager *imgui_manager) {
 }
 
 static inline void ImGuiLogDraw(ImGuiLog *imgui_log) {
-  const auto& records = imgui_log->records;
+  const auto &records = imgui_log->records;
 
   ImGui::Begin("Log");
   for (size_t i = 0; i < records.size(); ++i) {
@@ -108,8 +118,9 @@ static inline void ImGuiLogDraw(ImGuiLog *imgui_log) {
   ImGui::End();
 }
 
-static inline void ImGuiLogAdd(ImGuiLog *imgui_log, const std::string& type, const std::string& text) {
-  imgui_log->records.emplace_back(ImGuiLogRecord {type, text});
+static inline void ImGuiLogAdd(ImGuiLog *imgui_log, const std::string &type,
+                               const std::string &text) {
+  imgui_log->records.emplace_back(ImGuiLogRecord{type, text});
 }
 
 static void ImGuiManagerDraw(ImGuiManager *imgui_manager) {
@@ -155,8 +166,8 @@ ImGuiManagerLoadSourceFile(ImGuiManager *imgui_manager,
   }
 }
 
-template <typename ... T>
-static inline void ImGuiLogAddHelper(const char* type, T&& ... args) {
+template <typename... T>
+static inline void ImGuiLogAddHelper(const char *type, T &&... args) {
   std::stringstream ss;
   const auto log = [&](const auto &arg) -> int {
     ss << arg;
