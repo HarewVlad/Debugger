@@ -24,6 +24,10 @@ int main(int argc, char **argv) {
   }
 
   // Test();
+  if (!ImGuiLogInitialize(&Global_ImGuiLog)) {
+    LOG(main) << "Unable to initialize imgui log\n";
+    return 1;
+  }
 
   HANDLE continue_event = CreateEvent(NULL, FALSE, FALSE, NULL);
   if (!continue_event) {
