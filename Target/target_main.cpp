@@ -1,15 +1,35 @@
-#include <Windows.h>
 #include "target_include.h"
+#include <Windows.h>
+#include <iostream>
 
 void Function() {
-	int c = 30;
-	int a = 20 + c * 123;
+  int c = 30;
+  int a = 20 + c * 123;
 }
 
 int main() {
-	// OutputDebugStringA("HELLO DUDE!");
-	Function();
-	Method();
+  // OutputDebugStringA("HELLO DUDE!");
+  Function();
+  Method();
 
-	return 1;
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+  std::cout << "Hello";
+
+  return 1;
 }

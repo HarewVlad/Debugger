@@ -69,9 +69,9 @@ inline BOOL WINAPI EnumSourceFilesCallback(PSOURCEFILE SourceFile,
 inline BOOL WINAPI EnumLinesCallback(PSRCCODEINFO LineInfo, PVOID UserContext) {
   Debugger *debugger = (Debugger *)UserContext;
 
-  // LOG(INFO) << "Module: " << LineInfo->FileName << " - Line: " << std::dec <<
-  // LineInfo->LineNumber
-  //<< " - Address: " << std::hex << LineInfo->Address << '\n';
+  LOG_IMGUI_TO_FILE(INFO, "Module: ", LineInfo->FileName, " - Line: ", std::dec,
+                    LineInfo->LineNumber, " - Address: ", std::hex,
+                    LineInfo->Address)
   debugger->address_to_line[LineInfo->Address] =
       Line{LineInfo->LineNumber, LineInfo->FileName};
 
