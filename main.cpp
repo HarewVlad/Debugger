@@ -1,6 +1,4 @@
 #include "main.h"
-#include "utils.cpp"
-#include "directx11.cpp"
 #include "imgui/imgui.cpp"
 #include "imgui/imgui_demo.cpp"
 #include "imgui/imgui_draw.cpp"
@@ -8,6 +6,9 @@
 #include "imgui/imgui_impl_win32.cpp"
 #include "imgui/imgui_tables.cpp"
 #include "imgui/imgui_widgets.cpp"
+
+#include "utils.cpp"
+#include "directx11.cpp"
 #include "imgui_manager.cpp"
 #include "debugger.cpp"
 

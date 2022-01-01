@@ -3,6 +3,8 @@ struct Breakpoint {
 	BYTE original_instruction;
 };
 
+// NOTE: Store only hashes of lines
+
 struct Line {
   DWORD index;
   std::string path;
@@ -26,11 +28,9 @@ struct Debugger {
   std::unordered_map<DWORD64, Breakpoint *> invisible_breakpoints;
   std::vector<std::string> source_files;
   std::map<DWORD64, Line> address_to_line; // Address, Line number
-  std::unordered_map<DWORD64, DWORD64> filename_and_line_to_address;
+  std::unordered_map<DWORD64, DWORD64> line_hash_to_address; // Line hash = filename hash + line number hash
   CONTEXT original_context;
   HANDLE continue_event;
-  DWORD64 start_address; // To place initial invisible breakpoint
-  DWORD64 end_address; // To halt debugging when this address is being hit
   DWORD64 current_line_address;
 
   std::function<void(const std::vector<std::string>&)> OnLoadSourceFiles;

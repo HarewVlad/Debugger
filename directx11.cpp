@@ -3,18 +3,38 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd,
                                                              WPARAM wParam,
                                                              LPARAM lParam);
 
+inline bool Directx11CreateRenderTarget(Directx11 *directx) {
+  auto swap_chain = directx->swap_chain;
+  auto device = directx->device;
+
+  ID3D11Texture2D *back_buffer;
+  swap_chain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
+  device->CreateRenderTargetView(back_buffer, NULL,
+                                 &directx->render_target_view);
+  back_buffer->Release();
+
+  return true;
+}
+
+inline void Directx11ResizeWindow(Directx11 *directx, LPARAM lParam) {
+  auto swap_chain = directx->swap_chain;
+  auto render_target_view = directx->render_target_view;
+  auto device = directx->device;
+
+  if (render_target_view) render_target_view->Release();
+  if (swap_chain) swap_chain->ResizeBuffers(0, (UINT)LOWORD(lParam), (UINT)HIWORD(lParam), DXGI_FORMAT_UNKNOWN, 0);
+  if (device && swap_chain) Directx11CreateRenderTarget(directx);
+}
+
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) return true;
 
   switch (msg) {
-    case WM_SIZE:
-      // if (g_pd3dDevice != NULL && wParam != SIZE_MINIMIZED)
-      // {
-      //     CleanupRenderTarget();
-      //     g_pSwapChain->ResizeBuffers(0, (UINT)LOWORD(lParam),
-      //     (UINT)HIWORD(lParam), DXGI_FORMAT_UNKNOWN, 0);
-      //     CreateRenderTarget();
-      // }
+    case WM_SIZE: {
+        Directx11 *directx = (Directx11 *)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+
+        Directx11ResizeWindow(directx, lParam);
+      }
       return 0;
     case WM_SYSCOMMAND:
       if ((wParam & 0xfff0) == SC_KEYMENU)  // Disable ALT application menu
@@ -59,29 +79,19 @@ inline bool Directx11CreateDeviceAndSwapChain(Directx11 *directx) {
 }
 
 inline bool Directx11CreateWindow(Directx11 *directx) {
+  auto &window = directx->window;
+
   WNDCLASSEX wc = {sizeof(WNDCLASSEX),    CS_CLASSDC, WndProc, 0L,   0L,
                    GetModuleHandle(NULL), NULL,       NULL,    NULL, NULL,
                    _T("Debugger"),        NULL};
   RegisterClassEx(&wc);
-  directx->window =
+  window =
       CreateWindow(wc.lpszClassName, _T("Debugger"), WS_OVERLAPPEDWINDOW, 100,
                    100, 1280, 800, NULL, NULL, wc.hInstance, NULL);
+  SetWindowLongPtr(window, GWLP_USERDATA, (LONG_PTR)directx); // For ImGui resize
 
-  ShowWindow(directx->window, SW_SHOWDEFAULT);
-  UpdateWindow(directx->window);
-
-  return true;
-}
-
-inline bool Directx11CreateRenderTarget(Directx11 *directx) {
-  auto swap_chain = directx->swap_chain;
-  auto device = directx->device;
-
-  ID3D11Texture2D *back_buffer;
-  swap_chain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
-  device->CreateRenderTargetView(back_buffer, NULL,
-                                 &directx->render_target_view);
-  back_buffer->Release();
+  ShowWindow(window, SW_SHOWDEFAULT);
+  UpdateWindow(window);
 
   return true;
 }
@@ -116,6 +126,8 @@ static bool Directx11RenderBegin(Directx11 *directx) {
 
 static HRESULT Directx11RenderEnd(Directx11 *directx) {
   auto swap_chain = directx->swap_chain;
+
+  // ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
   return swap_chain->Present(1, 0);
 }

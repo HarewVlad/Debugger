@@ -77,8 +77,7 @@ inline BOOL WINAPI EnumLinesCallback(PSRCCODEINFO LineInfo, PVOID UserContext) {
 
   DWORD64 filename_line_hash =
       GetStringDWORDHash(LineInfo->FileName, LineInfo->LineNumber);
-  debugger->filename_and_line_to_address[filename_line_hash] =
-      LineInfo->Address;
+  debugger->line_hash_to_address[filename_line_hash] = LineInfo->Address;
 
   return TRUE;
 }
@@ -189,21 +188,18 @@ inline bool DebuggerRestoreInstruction(Debugger *debugger,
 
 static bool DebuggerRemoveBreakpoint(Debugger *debugger,
                                      const std::string &filename, DWORD line) {
-  const auto &filename_and_line_to_address =
-      debugger->filename_and_line_to_address;
+  const auto &line_hash_to_address = debugger->line_hash_to_address;
   auto &breakpoints = debugger->breakpoints;
   const auto pi = debugger->pi;
 
   DWORD64 filename_line_hash = GetStringDWORDHash(filename, line);
   DWORD64 filename_line_hash_temp = GetStringDWORDHash(filename, line);
-  auto filename_and_line_to_address_it =
-      filename_and_line_to_address.find(filename_line_hash);
-  if (filename_and_line_to_address_it != filename_and_line_to_address.end()) {
-    if (debugger->breakpoints.find(filename_and_line_to_address_it->second) !=
+  auto line_hash_to_address_it = line_hash_to_address.find(filename_line_hash);
+  if (line_hash_to_address_it != line_hash_to_address.end()) {
+    if (debugger->breakpoints.find(line_hash_to_address_it->second) !=
         debugger->breakpoints.end()) {
 
-      Breakpoint *breakpoint =
-          breakpoints[filename_and_line_to_address_it->second];
+      Breakpoint *breakpoint = breakpoints[line_hash_to_address_it->second];
 
       // Restore original instruction
       DWORD read_bytes;
@@ -217,7 +213,7 @@ static bool DebuggerRemoveBreakpoint(Debugger *debugger,
       FlushInstructionCache(pi.hProcess, (void *)breakpoint->address, 1);
 
       // Remove breakpoint
-      breakpoints.erase(filename_and_line_to_address_it->second);
+      breakpoints.erase(line_hash_to_address_it->second);
       delete breakpoint;
     } else {
       LOG_IMGUI(DebuggerRemoveBreakpoint, "Breakpoint for ", filename, ", ",
@@ -313,20 +309,18 @@ static bool DebuggerStepOver(Debugger *debugger) {
 // TODO: Use hash created by ImGuiManager
 static bool DebuggerSetBreakpoint(Debugger *debugger,
                                   const std::string &filename, DWORD line) {
-  const auto &filename_and_line_to_address =
-      debugger->filename_and_line_to_address;
+  const auto &line_hash_to_address = debugger->line_hash_to_address;
   auto &breakpoints = debugger->breakpoints;
   const auto pi = debugger->pi;
 
   DWORD64 filename_line_hash = GetStringDWORDHash(filename, line);
   DWORD64 filename_line_hash_temp = GetStringDWORDHash(filename, line);
-  auto filename_and_line_to_address_it =
-      filename_and_line_to_address.find(filename_line_hash);
-  if (filename_and_line_to_address_it != filename_and_line_to_address.end()) {
-    if (breakpoints.find(filename_and_line_to_address_it->second) ==
+  auto line_hash_to_address_it = line_hash_to_address.find(filename_line_hash);
+  if (line_hash_to_address_it != line_hash_to_address.end()) {
+    if (breakpoints.find(line_hash_to_address_it->second) ==
         breakpoints.end()) {
-      breakpoints[filename_and_line_to_address_it->second] = CreateBreakpoint(
-          pi.hProcess, filename_and_line_to_address_it->second);
+      breakpoints[line_hash_to_address_it->second] =
+          CreateBreakpoint(pi.hProcess, line_hash_to_address_it->second);
       ;
     } else {
       LOG_IMGUI(DebuggerSetBreakpoint, "Breakpoint for", filename, ", ", line,
@@ -375,17 +369,17 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
                               (DWORD64)create_process_debug_info.lpBaseOfImage);
 
     // Replace first instruction with int3
-    debugger->start_address =
+    DWORD64 start_address =
         DebuggerGetTargetStartAddress(pi.hProcess, pi.hThread);
 
-    const Line &line = address_to_line[debugger->start_address];
+    const Line &line = address_to_line[start_address];
 
     if (debugger->OnLineIndexChange) {
       debugger->OnLineIndexChange(line);
     }
 
-    invisible_breakpoints[debugger->start_address] =
-        CreateBreakpoint(pi.hProcess, debugger->start_address);
+    invisible_breakpoints[start_address] =
+        CreateBreakpoint(pi.hProcess, start_address);
   } break;
   case OUTPUT_DEBUG_STRING_EVENT: {
     const OUTPUT_DEBUG_STRING_INFO output_debug_string_info =
@@ -433,13 +427,15 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         context.ContextFlags = CONTEXT_ALL;
         GetThreadContext(pi.hThread, &context);
 
-        // Return address
-        debugger->end_address = DebuggetGetFunctionReturnAddress(context, pi);
-        if (invisible_breakpoints.find(debugger->end_address) ==
+// Return address
+#ifdef BREAKPOINT_END_ADDRESS
+        DWORD64 end_address = DebuggetGetFunctionReturnAddress(context, pi);
+        if (invisible_breakpoints.find(end_address) ==
             invisible_breakpoints.end()) {
-          invisible_breakpoints[debugger->end_address] =
-              CreateBreakpoint(pi.hProcess, debugger->end_address);
+          invisible_breakpoints[end_address] =
+              CreateBreakpoint(pi.hProcess, end_address);
         }
+#endif
 
         Breakpoint *breakpoint = nullptr;
         const auto it = breakpoints.find(exception_address);
