@@ -64,6 +64,7 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
         ImGui::SameLine();
         ImGui::SetCursorPos({ImGui::GetCursorPosX() + circle_offset_x,
                              ImGui::GetCursorPosY() - line_number_offset_y});
+        ImGui::PushID(i);
         if (ImGui::Button(it->second[i].text.c_str())) {
           if (breakpoints.find(it->second[i].hash) != breakpoints.end()) {
             if (imgui_manager->OnRemoveBreakpoint &&
@@ -77,6 +78,7 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
             }
           }
         }
+        ImGui::PopID();
         ImGui::PopStyleColor(3);
       }
 
