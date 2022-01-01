@@ -8,16 +8,23 @@ struct ImGuiLog {
   std::ofstream file;
 };
 
+struct ImGuiLineInfo {
+  DWORD index;
+  DWORD64 hash;
+  std::string text;
+};
+
 struct ImGuiManager {
   std::function<void()> OnStepOver;
   std::function<void()> OnPrintCallstack;
   std::function<void()> OnPrintRegisters;
-  std::function<bool(const std::string&, DWORD)> OnSetBreakpoint;
-  std::function<bool(const std::string&, DWORD)> OnRemoveBreakpoint;
+  std::function<bool(DWORD64)> OnSetBreakpoint;
+  std::function<bool(DWORD64)> OnRemoveBreakpoint;
   std::function<void()> OnContinue;
 
-  std::unordered_map<std::string, std::vector<std::string>> path_to_source_code;
-  std::unordered_map<std::string, std::string> path_to_filename;
+  // std::unordered_map<std::string, std::vector<std::string>> path_to_source_code;
+  // std::unordered_map<std::string, std::string> path_to_filename;
+  std::unordered_map<std::string, std::vector<ImGuiLineInfo>> filename_to_source_code_line_info;
   std::set<DWORD64> breakpoints;
   Line current_line;
 };

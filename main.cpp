@@ -38,8 +38,8 @@ int main(int argc, char **argv) {
   Debugger debugger = CreateDebugger(argv[1], continue_event);
   ImGuiManager imgui_manager = CreateImGuiManager();
   debugger.OnLoadSourceFiles =
-      [&](const std::vector<std::string> &source_files) {
-        ImGuiManagerLoadSourceFile(&imgui_manager, source_files);
+      [&](const std::unordered_map<std::string, std::vector<Line>>& source_filename_to_lines) {
+        ImGuiManagerLoadSourceFile(&imgui_manager, source_filename_to_lines);
       };
   debugger.OnLineIndexChange = [&](const Line& line) {
     imgui_manager.current_line = line;
@@ -51,13 +51,11 @@ int main(int argc, char **argv) {
   };
   imgui_manager.OnPrintCallstack = [&]() { DebuggerPrintCallstack(&debugger); };
   imgui_manager.OnPrintRegisters = [&]() { DebuggerPrintRegisters(&debugger); };
-  imgui_manager.OnSetBreakpoint = [&](const std::string &filename,
-                                      DWORD line) -> bool {
-    return DebuggerSetBreakpoint(&debugger, filename, line);
+  imgui_manager.OnSetBreakpoint = [&](DWORD64 hash) -> bool {
+    return DebuggerSetBreakpoint(&debugger, hash);
   };
-  imgui_manager.OnRemoveBreakpoint = [&](const std::string &filename,
-                                         DWORD line) -> bool {
-    return DebuggerRemoveBreakpoint(&debugger, filename, line);
+  imgui_manager.OnRemoveBreakpoint = [&](DWORD64 hash) -> bool {
+    return DebuggerRemoveBreakpoint(&debugger, hash);
   };
   imgui_manager.OnContinue = [&]() { SetEvent(continue_event); };
 

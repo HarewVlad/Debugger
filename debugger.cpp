@@ -69,15 +69,21 @@ inline BOOL WINAPI EnumSourceFilesCallback(PSOURCEFILE SourceFile,
 inline BOOL WINAPI EnumLinesCallback(PSRCCODEINFO LineInfo, PVOID UserContext) {
   Debugger *debugger = (Debugger *)UserContext;
 
-  LOG_IMGUI_TO_FILE(INFO, "Module: ", LineInfo->FileName, " - Line: ", std::dec,
-                    LineInfo->LineNumber, " - Address: ", std::hex,
-                    LineInfo->Address)
-  debugger->address_to_line[LineInfo->Address] =
-      Line{LineInfo->LineNumber, LineInfo->FileName};
+  // LOG_IMGUI_TO_FILE(INFO, "Module: ", LineInfo->FileName, " - Line: ",
+  // std::dec,
+  //                   LineInfo->LineNumber, " - Address: ", std::hex,
+  //                   LineInfo->Address)
 
+  // Fill partial info for placing breakpoints
   DWORD64 filename_line_hash =
       GetStringDWORDHash(LineInfo->FileName, LineInfo->LineNumber);
+
+  Line line{LineInfo->LineNumber, filename_line_hash};
+  debugger->address_to_line[LineInfo->Address] = line;
   debugger->line_hash_to_address[filename_line_hash] = LineInfo->Address;
+
+  // Fill full info
+  debugger->source_filename_to_lines[LineInfo->FileName].emplace_back(line);
 
   return TRUE;
 }
@@ -104,7 +110,7 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
   IMAGEHLP_MODULE64 module_info;
   module_info.SizeOfStruct = sizeof(module_info);
   if (SymGetModuleInfo64(process, base, &module_info)) {
-    LOG_IMGUI(INFO, "Loaded DLL", filename, ", at address", base_address,
+    LOG_IMGUI(INFO, "Loaded DLL ", filename, ", at address", base_address,
               module_info.SymType == SymPdb ? ", symbols loaded."
                                             : "symbols not loaded")
 
@@ -112,14 +118,14 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
       SymEnumSourceFiles(pi.hProcess, base, "*.[ic][np][lp?]",
                          EnumSourceFilesCallback, debugger);
 
-      // Send source files with debug symbols
-      if (debugger->OnLoadSourceFiles)
-        debugger->OnLoadSourceFiles(debugger->source_files);
-
       for (int i = 0; i < debugger->source_files.size(); ++i) {
         SymEnumLines(pi.hProcess, base, NULL, debugger->source_files[i].c_str(),
                      EnumLinesCallback, debugger);
       }
+
+      // Send source files with debug symbols
+      if (debugger->OnLoadSourceFiles)
+        debugger->OnLoadSourceFiles(debugger->source_filename_to_lines);
     }
   } else {
     LOG_IMGUI(DebuggerLoadTargetModules, "Unable to load ", filename)
@@ -186,15 +192,12 @@ inline bool DebuggerRestoreInstruction(Debugger *debugger,
   return true;
 }
 
-static bool DebuggerRemoveBreakpoint(Debugger *debugger,
-                                     const std::string &filename, DWORD line) {
+static bool DebuggerRemoveBreakpoint(Debugger *debugger, DWORD64 hash) {
   const auto &line_hash_to_address = debugger->line_hash_to_address;
   auto &breakpoints = debugger->breakpoints;
   const auto pi = debugger->pi;
 
-  DWORD64 filename_line_hash = GetStringDWORDHash(filename, line);
-  DWORD64 filename_line_hash_temp = GetStringDWORDHash(filename, line);
-  auto line_hash_to_address_it = line_hash_to_address.find(filename_line_hash);
+  auto line_hash_to_address_it = line_hash_to_address.find(hash);
   if (line_hash_to_address_it != line_hash_to_address.end()) {
     if (debugger->breakpoints.find(line_hash_to_address_it->second) !=
         debugger->breakpoints.end()) {
@@ -216,12 +219,12 @@ static bool DebuggerRemoveBreakpoint(Debugger *debugger,
       breakpoints.erase(line_hash_to_address_it->second);
       delete breakpoint;
     } else {
-      LOG_IMGUI(DebuggerRemoveBreakpoint, "Breakpoint for ", filename, ", ",
-                line, " doesn't exists!")
+      LOG_IMGUI(DebuggerRemoveBreakpoint, "Breakpoint for ", hash,
+                " doesn't exists!")
     }
   } else {
-    LOG_IMGUI(DebuggerRemoveBreakpoint, "Unable to remove breakpoint in \"",
-              filename, "\", ", line);
+    LOG_IMGUI(DebuggerRemoveBreakpoint, "Unable to remove breakpoint for ",
+              hash);
   }
 
   return true;
@@ -299,7 +302,7 @@ static bool DebuggerStepOver(Debugger *debugger) {
     invisible_breakpoints[current_line_it->first] =
         CreateBreakpoint(pi.hProcess, current_line_it->first);
   } else {
-    LOG_IMGUI(DebuggerStepOver, "Breakpoint \"", current_line_it->second.path,
+    LOG_IMGUI(DebuggerStepOver, "Breakpoint \"", current_line_it->second.hash,
               "\", ", current_line_it->second.index, " already exists")
   }
 
@@ -307,15 +310,12 @@ static bool DebuggerStepOver(Debugger *debugger) {
 }
 
 // TODO: Use hash created by ImGuiManager
-static bool DebuggerSetBreakpoint(Debugger *debugger,
-                                  const std::string &filename, DWORD line) {
+static bool DebuggerSetBreakpoint(Debugger *debugger, DWORD64 hash) {
   const auto &line_hash_to_address = debugger->line_hash_to_address;
   auto &breakpoints = debugger->breakpoints;
   const auto pi = debugger->pi;
 
-  DWORD64 filename_line_hash = GetStringDWORDHash(filename, line);
-  DWORD64 filename_line_hash_temp = GetStringDWORDHash(filename, line);
-  auto line_hash_to_address_it = line_hash_to_address.find(filename_line_hash);
+  auto line_hash_to_address_it = line_hash_to_address.find(hash);
   if (line_hash_to_address_it != line_hash_to_address.end()) {
     if (breakpoints.find(line_hash_to_address_it->second) ==
         breakpoints.end()) {
@@ -323,13 +323,12 @@ static bool DebuggerSetBreakpoint(Debugger *debugger,
           CreateBreakpoint(pi.hProcess, line_hash_to_address_it->second);
       ;
     } else {
-      LOG_IMGUI(DebuggerSetBreakpoint, "Breakpoint for", filename, ", ", line,
-                " already present!")
+      LOG_IMGUI(DebuggerSetBreakpoint, "Breakpoint for", hash,
+                ", already present!")
       return false;
     }
   } else {
-    LOG_IMGUI(DebuggerSetBreakpoint, "Unable to set breakpoint in \"", filename,
-              "\", for line: ", line)
+    LOG_IMGUI(DebuggerSetBreakpoint, "Unable to set breakpoint for ", hash)
     return false;
   }
 
@@ -414,7 +413,7 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
 
         const Line &line = address_to_line[exception_address];
 
-        LOG_IMGUI(DebuggerProcessEvent, "Breakpoint at (", line.path, ", ",
+        LOG_IMGUI(DebuggerProcessEvent, "Breakpoint at (", line.hash, ", ",
                   std::dec, line.index, ", ", std::hex, exception_address, ')');
 
         debugger->current_line_address = exception_address;
