@@ -8,6 +8,7 @@
 #include "imgui/imgui_widgets.cpp"
 
 #include "utils.cpp"
+#include "registers.cpp"
 #include "directx11.cpp"
 #include "imgui_manager.cpp"
 #include "debugger.cpp"
@@ -35,8 +36,10 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  Debugger debugger = CreateDebugger(argv[1], continue_event);
-  ImGuiManager imgui_manager = CreateImGuiManager();
+  Registers registers = CreateRegisters();
+
+  Debugger debugger = CreateDebugger(&registers, argv[1], continue_event);
+  ImGuiManager imgui_manager = CreateImGuiManager(&registers);
   debugger.OnLoadSourceFiles =
       [&](const std::unordered_map<std::string, std::vector<Line>>& source_filename_to_lines) {
         ImGuiManagerLoadSourceFile(&imgui_manager, source_filename_to_lines);

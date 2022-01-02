@@ -38,9 +38,11 @@ struct Debugger {
   CONTEXT original_context;
   HANDLE continue_event;
   DWORD64 current_line_address;
-
   std::function<void(
       const std::unordered_map<std::string, std::vector<Line>> &)>
       OnLoadSourceFiles;
   std::function<void(const Line &)> OnLineIndexChange;
+
+  // Modules
+  Registers *registers;
 };

@@ -1,4 +1,4 @@
-static ImGuiManager CreateImGuiManager() {
+static ImGuiManager CreateImGuiManager(Registers *registers) {
   ImGuiManager result;
 
   IMGUI_CHECKVERSION();
@@ -10,7 +10,30 @@ static ImGuiManager CreateImGuiManager() {
   ImGui::StyleColorsDark();
   ImGui::StyleColorsClassic();
 
+  result.registers = registers;
+
   return result;
+}
+
+// TODO: Change for x64
+inline void ImGuiDrawRegisters(ImGuiManager *imgui_manager) {
+  const auto registers = imgui_manager->registers;
+
+  ImGui::Begin("Registers");
+  ImGui::Text("Edi: %lu", registers->Edi);
+  ImGui::Text("Esi: %lu", registers->Esi);
+  ImGui::Text("Ebx: %lu", registers->Ebx);
+  ImGui::Text("Edx: %lu", registers->Edx);
+  ImGui::Text("Ecx: %lu", registers->Ecx);
+  ImGui::Text("Eax: %lu", registers->Eax);
+  ImGui::Text("Ebp: %lu", registers->Ebp);
+  ImGui::Text("Eip: %lu", registers->Eip);
+  ImGui::Text("SegCs: %lu", registers->SegCs);
+  ImGui::Text("EFlags: %lu", registers->EFlags);
+  ImGui::Text("Esp: %lu", registers->Esp);
+  ImGui::Text("SegSs: %lu", registers->SegSs);
+
+  ImGui::End();
 }
 
 inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
@@ -91,23 +114,33 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
 }
 
 inline void ImGuiManagerDrawInterface(ImGuiManager *imgui_manager) {
+  static bool is_f5_pressed = false;
+  static bool is_f10_pressed = false;
+
   ImGui::Begin("Interface");
-  if (ImGui::Button("Continue")) {
+  if (ImGui::Button("Continue") ||
+      (GetAsyncKeyState(VK_F5) & 0x8000) && !is_f5_pressed) {
     imgui_manager->OnContinue();
+
+    is_f5_pressed = true;
+  } else if (!(GetAsyncKeyState(VK_F5) & 0x8000)) {
+    is_f5_pressed = false;
   }
-  if (ImGui::Button("Step over")) {
+
+  if (ImGui::Button("Step over") ||
+      (GetAsyncKeyState(VK_F10) & 0x8000) && !is_f10_pressed) {
     imgui_manager->OnStepOver();
+
+    is_f10_pressed = true;
+  } else if (!(GetAsyncKeyState(VK_F10) & 0x8000)) {
+    is_f10_pressed = false;
   }
 
-  if (ImGui::Button("Callstack")) {
-    imgui_manager->OnPrintCallstack();
-  }
+  // if (ImGui::Button("Callstack")) {
+  //   imgui_manager->OnPrintCallstack();
+  // }
 
-  if (ImGui::Button("Registers")) {
-    imgui_manager->OnPrintRegisters();
-  }
-
-  if (ImGui::Button("Exit")) {
+  if (ImGui::Button("Exit") || (GetAsyncKeyState(VK_ESCAPE) & 0x8000)) {
     Global_IsOpen = false;
   }
 
@@ -138,6 +171,7 @@ static void ImGuiManagerDraw(ImGuiManager *imgui_manager) {
   ImGuiManagerDrawInterface(imgui_manager);
   ImGuiDrawCode(imgui_manager);
   ImGuiLogDraw(&Global_ImGuiLog);
+  ImGuiDrawRegisters(imgui_manager);
 }
 
 static void ImGuiManagerBeginDirectx11() {

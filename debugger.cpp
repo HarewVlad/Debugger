@@ -1,4 +1,4 @@
-static Debugger CreateDebugger(const std::string &process_name,
+static Debugger CreateDebugger(Registers *registers, const std::string &process_name,
                                HANDLE continue_event) {
   Debugger result;
 
@@ -18,6 +18,7 @@ static Debugger CreateDebugger(const std::string &process_name,
   result.si = si;
   result.pi = pi;
   result.continue_event = continue_event;
+  result.registers = registers;
 
   return result;
 }
@@ -426,7 +427,8 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         context.ContextFlags = CONTEXT_ALL;
         GetThreadContext(pi.hThread, &context);
 
-// Return address
+        RegistersUpdateFromContext(debugger->registers, context);
+
 #ifdef BREAKPOINT_END_ADDRESS
         DWORD64 end_address = DebuggetGetFunctionReturnAddress(context, pi);
         if (invisible_breakpoints.find(end_address) ==

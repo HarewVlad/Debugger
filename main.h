@@ -33,6 +33,7 @@ static bool Global_IsOpen = true;
 #include <d3d11.h>
 
 #include "directx11.h"
+#include "registers.h"
 #include "debugger.h"
 #include "imgui_manager.h"
 

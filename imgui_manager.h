@@ -22,11 +22,12 @@ struct ImGuiManager {
   std::function<bool(DWORD64)> OnRemoveBreakpoint;
   std::function<void()> OnContinue;
 
-  // std::unordered_map<std::string, std::vector<std::string>> path_to_source_code;
-  // std::unordered_map<std::string, std::string> path_to_filename;
   std::unordered_map<std::string, std::vector<ImGuiLineInfo>> filename_to_source_code_line_info;
   std::set<DWORD64> breakpoints;
   Line current_line;
+
+  // Modules
+  Registers *registers;
 };
 
 template <typename ... T>
