@@ -1,7 +1,12 @@
 #include "target_include.h"
 
-void Method() {
-  int b = 20;
-  int c = 33;
-  int a = 10 + b * c;
+void Additional(int c) {
+  int a = c * 10 / 20;
+}
+
+void Method(int a, int b, float c) {
+  int d = 20;
+  int e = 33;
+  Additional(c);
+  int f = 10 + d * e;
 }

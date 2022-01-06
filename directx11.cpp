@@ -97,7 +97,7 @@ inline bool Directx11CreateWindow(Directx11 *directx) {
 }
 
 static Directx11 *CreateDirectx11() {
-  Directx11 *result = new Directx11;
+  Directx11 *result = new Directx11 {};
 
   if (!Directx11CreateWindow(result) ||
       !Directx11CreateDeviceAndSwapChain(result) ||

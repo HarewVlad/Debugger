@@ -34,6 +34,7 @@ static bool Global_IsOpen = true;
 
 #include "directx11.h"
 #include "registers.h"
+#include "local_variable.h"
 #include "debugger.h"
 #include "imgui_manager.h"
 

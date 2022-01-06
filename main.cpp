@@ -9,6 +9,7 @@
 
 #include "utils.cpp"
 #include "registers.cpp"
+#include "local_variable.cpp"
 #include "directx11.cpp"
 #include "imgui_manager.cpp"
 #include "debugger.cpp"
@@ -37,15 +38,16 @@ int main(int argc, char **argv) {
   }
 
   Registers registers = CreateRegisters();
+  LocalVariables local_variables = CreateLocalVariables();
 
-  Debugger debugger = CreateDebugger(&registers, argv[1], continue_event);
-  ImGuiManager imgui_manager = CreateImGuiManager(&registers);
+  Debugger debugger = CreateDebugger(&registers, &local_variables, argv[1], continue_event);
+  ImGuiManager imgui_manager = CreateImGuiManager(&registers, &local_variables);
   debugger.OnLoadSourceFiles =
       [&](const std::unordered_map<std::string, std::vector<Line>>& source_filename_to_lines) {
         ImGuiManagerLoadSourceFile(&imgui_manager, source_filename_to_lines);
       };
-  debugger.OnLineIndexChange = [&](const Line& line) {
-    imgui_manager.current_line = line;
+  debugger.OnLineHashChange = [&](DWORD64 hash) {
+    imgui_manager.current_line_hash = hash;
   };
   imgui_manager.OnStepOver = [&]() {
     DebuggerStepOver(&debugger);
@@ -53,7 +55,6 @@ int main(int argc, char **argv) {
     SetEvent(continue_event);
   };
   imgui_manager.OnPrintCallstack = [&]() { DebuggerPrintCallstack(&debugger); };
-  imgui_manager.OnPrintRegisters = [&]() { DebuggerPrintRegisters(&debugger); };
   imgui_manager.OnSetBreakpoint = [&](DWORD64 hash) -> bool {
     return DebuggerSetBreakpoint(&debugger, hash);
   };

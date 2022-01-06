@@ -1,4 +1,5 @@
-static ImGuiManager CreateImGuiManager(Registers *registers) {
+static ImGuiManager CreateImGuiManager(Registers *registers,
+                                       LocalVariables *local_variables) {
   ImGuiManager result;
 
   IMGUI_CHECKVERSION();
@@ -11,6 +12,7 @@ static ImGuiManager CreateImGuiManager(Registers *registers) {
   ImGui::StyleColorsClassic();
 
   result.registers = registers;
+  result.local_variables = local_variables;
 
   return result;
 }
@@ -36,9 +38,21 @@ inline void ImGuiDrawRegisters(ImGuiManager *imgui_manager) {
   ImGui::End();
 }
 
+inline void ImGuiDrawLocalVariables(ImGuiManager *imgui_manager) {
+  const auto &local_variables = imgui_manager->local_variables;
+  const auto &variables = local_variables->variables;
+
+  ImGui::Begin("Local variables");
+  for (size_t i = 0; i < variables.size(); ++i) {
+    ImGui::Text("Name: %s, Value = %s", variables[i].name.c_str(),
+                variables[i].value.c_str());
+  }
+  ImGui::End();
+}
+
 inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
   auto &breakpoints = imgui_manager->breakpoints;
-  const auto &current_line = imgui_manager->current_line;
+  DWORD64 current_line_hash = imgui_manager->current_line_hash;
   const auto &filename_to_source_code_line_info =
       imgui_manager->filename_to_source_code_line_info;
 
@@ -73,8 +87,7 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
 
         // Draw cursor
         float h = 4 / 7.0f;
-        if (current_line.hash == it->second[i].hash &&
-            current_line.index == it->second[i].index) {
+        if (current_line_hash == it->second[i].hash) {
           h = 8 / 7.0f;
         }
 
@@ -172,6 +185,7 @@ static void ImGuiManagerDraw(ImGuiManager *imgui_manager) {
   ImGuiDrawCode(imgui_manager);
   ImGuiLogDraw(&Global_ImGuiLog);
   ImGuiDrawRegisters(imgui_manager);
+  ImGuiDrawLocalVariables(imgui_manager);
 }
 
 static void ImGuiManagerBeginDirectx11() {

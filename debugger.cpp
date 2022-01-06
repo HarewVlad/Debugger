@@ -1,4 +1,6 @@
-static Debugger CreateDebugger(Registers *registers, const std::string &process_name,
+static Debugger CreateDebugger(Registers *registers,
+                               LocalVariables *local_variables,
+                               const std::string &process_name,
                                HANDLE continue_event) {
   Debugger result;
 
@@ -19,11 +21,136 @@ static Debugger CreateDebugger(Registers *registers, const std::string &process_
   result.pi = pi;
   result.continue_event = continue_event;
   result.registers = registers;
+  result.local_variables = local_variables;
 
   return result;
 }
 
-inline DWORD64 DebuggetGetFunctionReturnAddress(CONTEXT &context,
+struct EnumSymbolsCallbackData {
+  Debugger *debugger;
+  LocalVariables *local_variables;
+  ULONG64 frame_address;
+};
+
+inline std::string DebuggerGetValueFromSymbol(Debugger *debugger,
+                                              PSYMBOL_INFO symbol_info,
+                                              ULONG64 frame_address) {
+  const auto pi = debugger->pi;
+
+  enum SymTagEnum tag = (enum SymTagEnum)0;
+  SymGetTypeInfo(pi.hProcess, symbol_info->ModBase, symbol_info->TypeIndex,
+                 TI_GET_SYMTAG, &tag);
+  switch (tag) {
+  case SymTagBaseType: {
+    BasicType type = (BasicType)0;
+    SymGetTypeInfo(pi.hProcess, symbol_info->ModBase, symbol_info->TypeIndex,
+                   TI_GET_BASETYPE, &type);
+    ULONG64 length = 0;
+    SymGetTypeInfo(pi.hProcess, symbol_info->ModBase, symbol_info->TypeIndex,
+                   TI_GET_LENGTH, &length);
+
+    // Load actual value
+    DWORD read_bytes;
+    switch (type) {
+    case btInt: {
+      int data;
+      if (ReadProcessMemory(pi.hProcess,
+                            (void *)(frame_address + symbol_info->Address),
+                            &data, length, &read_bytes)) {
+        return std::to_string(data);
+      }
+    }
+
+    break;
+    case btFloat: {
+      float data;
+      if (ReadProcessMemory(pi.hProcess,
+                            (void *)(frame_address + symbol_info->Address),
+                            &data, length, &read_bytes)) {
+        return std::to_string(data);
+      }
+    }
+
+    break;
+    default:
+      return "Unsupported type";
+      break;
+    }
+  } break;
+  default:
+    return "Unsupported type";
+    break;
+  }
+
+  return "";
+}
+
+inline BOOL WINAPI EnumSymbolsCallback(PSYMBOL_INFO pSymInfo, ULONG SymbolSize,
+                                       PVOID UserContext) {
+  if ((pSymInfo->Flags & SYMFLAG_PARAMETER) == 0) {
+    // Indicates that parameter on the stack is not a function argument
+    // TODO: Remove return
+    // return TRUE;
+  }
+
+  auto data = reinterpret_cast<EnumSymbolsCallbackData *>(UserContext);
+  auto &local_variables = data->local_variables;
+  auto &variables = local_variables->variables;
+
+  std::string value =
+      DebuggerGetValueFromSymbol(data->debugger, pSymInfo, data->frame_address);
+
+  variables.emplace_back(LocalVariable{pSymInfo->Name, value});
+
+  return TRUE;
+}
+
+inline void DebuggerGetLocalVariables(Debugger *debugger, CONTEXT context) {
+  const auto &pi = debugger->pi;
+  auto &local_variables = debugger->local_variables;
+
+  STACKFRAME64 stack = {};
+  stack.AddrPC.Offset = context.Eip;
+  stack.AddrPC.Mode = AddrModeFlat;
+  stack.AddrFrame.Offset = context.Ebp;
+  stack.AddrFrame.Mode = AddrModeFlat;
+  stack.AddrStack.Offset = context.Esp;
+  stack.AddrStack.Mode = AddrModeFlat;
+  if (!StackWalk64(IMAGE_FILE_MACHINE_I386, pi.hProcess, pi.hThread, &stack,
+                   &context, NULL, SymFunctionTableAccess64, SymGetModuleBase64,
+                   0)) {
+    return;
+  }
+
+  // Function
+  PSYMBOL_INFO symbol_info =
+      (PSYMBOL_INFO) new char[sizeof(SYMBOL_INFO) + MAX_SYM_NAME];
+  symbol_info->MaxNameLen = MAX_SYM_NAME;
+  symbol_info->SizeOfStruct = sizeof(SYMBOL_INFO);
+  DWORD64 displacement;
+  SymFromAddr(pi.hProcess, stack.AddrPC.Offset, &displacement, symbol_info);
+  std::string name = symbol_info->Name;
+
+  IMAGEHLP_STACK_FRAME stack_frame = {};
+  stack_frame.InstructionOffset = stack.AddrPC.Offset;
+
+  if (SymSetContext(pi.hProcess, &stack_frame, NULL) == FALSE &&
+      GetLastError() != ERROR_SUCCESS) {
+    return;
+  }
+
+  LocalVariablesReset(local_variables);
+
+  EnumSymbolsCallbackData data{debugger, local_variables,
+                               stack.AddrFrame.Offset};
+
+  if (SymEnumSymbols(pi.hProcess, 0, NULL, EnumSymbolsCallback, (PVOID)&data) ==
+      FALSE) {
+    return;
+  }
+}
+
+inline DWORD64 DebuggetGetFunctionReturnAddress(CONTEXT context,
                                                 PROCESS_INFORMATION &pi) {
   STACKFRAME64 stack = {};
   stack.AddrPC.Offset = context.Eip;
@@ -38,7 +165,7 @@ inline DWORD64 DebuggetGetFunctionReturnAddress(CONTEXT &context,
     return NULL;
   }
 
-  return stack.AddrReturn.Offset; // + 0x5 ?
+  return stack.AddrReturn.Offset;
 }
 
 inline DWORD64 DebuggerGetTargetStartAddress(HANDLE process, HANDLE thread) {
@@ -161,24 +288,9 @@ static Breakpoint *CreateBreakpoint(HANDLE process, DWORD64 address) {
   return result;
 }
 
-// TODO: Rethink design like create struct or something
-static void DebuggerPrintRegisters(Debugger *debugger) {
-  auto pi = debugger->pi;
-  auto context = debugger->original_context;
-
-  // LOG(INFO) << "EAX = " << context.Eax << "\nEBX = " << context.Ebx
-  //           << "\nECX = " << context.Ecx << '\n';
-}
-
 inline bool DebuggerRestoreInstruction(Debugger *debugger,
-                                       Breakpoint *breakpoint,
-                                       CONTEXT context) {
+                                       Breakpoint *breakpoint) {
   auto pi = debugger->pi;
-
-  // Restore EIP
-  --context.Eip;
-  context.EFlags |= 0x100; // Trap flag
-  SetThreadContext(pi.hThread, &context);
 
   // Restore original instruction
   DWORD read_bytes;
@@ -189,6 +301,23 @@ inline bool DebuggerRestoreInstruction(Debugger *debugger,
     return false;
   }
   FlushInstructionCache(pi.hProcess, (void *)breakpoint->address, 1);
+
+  return true;
+}
+
+inline bool DebuggerRestoreInstruction(Debugger *debugger, DWORD64 address,
+                                       BYTE instruction) {
+  auto pi = debugger->pi;
+
+  // Restore original instruction
+  DWORD read_bytes;
+  if (!WriteProcessMemory(pi.hProcess, (void *)address, &instruction, 1,
+                          &read_bytes)) {
+    LOG_IMGUI(DebuggerRestoreInstruction,
+              "WriteProcessMemory failed, error = ", GetLastError())
+    return false;
+  }
+  FlushInstructionCache(pi.hProcess, (void *)address, 1);
 
   return true;
 }
@@ -374,8 +503,8 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
 
     const Line &line = address_to_line[start_address];
 
-    if (debugger->OnLineIndexChange) {
-      debugger->OnLineIndexChange(line);
+    if (debugger->OnLineHashChange) {
+      debugger->OnLineHashChange(line.hash);
     }
 
     invisible_breakpoints[start_address] =
@@ -419,15 +548,22 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
 
         debugger->current_line_address = exception_address;
 
-        if (debugger->OnLineIndexChange) {
-          debugger->OnLineIndexChange(line);
+        if (debugger->OnLineHashChange) {
+          debugger->OnLineHashChange(line.hash);
         }
 
-        CONTEXT context;
+        CONTEXT context = {};
         context.ContextFlags = CONTEXT_ALL;
         GetThreadContext(pi.hThread, &context);
 
-        RegistersUpdateFromContext(debugger->registers, context);
+        // Restore it to be before debug instruction, because exception already
+        // occured, that means target instruction already been executed
+        --context.Eip;
+
+        debugger->original_context = context;
+
+        context.EFlags |= 0x100; // Trap flag
+        SetThreadContext(pi.hThread, &context);
 
 #ifdef BREAKPOINT_END_ADDRESS
         DWORD64 end_address = DebuggetGetFunctionReturnAddress(context, pi);
@@ -446,9 +582,7 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
           breakpoint = invisible_breakpoints[exception_address];
         }
 
-        debugger->original_context = context;
-
-        DebuggerRestoreInstruction(debugger, breakpoint, context);
+        DebuggerRestoreInstruction(debugger, breakpoint);
 
         // So it is an invisible breakpoint, need to delete
         if (it == breakpoints.end()) {
@@ -457,24 +591,18 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
       }
     } break;
     case EXCEPTION_SINGLE_STEP: {
-      // Reinstall exception
-      if (breakpoints.find(debugger->original_context.Eip - 1) !=
+      // Reinstall exception if there is a breakpoint still
+      if (breakpoints.find(debugger->original_context.Eip) !=
           breakpoints.end()) {
-        BYTE instruction = 0xcc;
-        DWORD read_bytes;
-        if (!WriteProcessMemory(pi.hProcess,
-                                (void *)(debugger->original_context.Eip - 1),
-                                &instruction, 1, &read_bytes)) {
-          LOG_IMGUI(DebuggerProcessEvent,
-                    "WriteProcessMemory failed, error = ", GetLastError())
-          return false;
-        }
-
-        FlushInstructionCache(pi.hProcess,
-                              (void *)(debugger->original_context.Eip - 1), 1);
+        DebuggerRestoreInstruction(debugger, debugger->original_context.Eip,
+                                   0xCC);
       }
 
-      // Wait for user events ("step over", "print callstack", ...)
+      RegistersUpdateFromContext(debugger->registers,
+                                 debugger->original_context);
+      DebuggerGetLocalVariables(debugger, debugger->original_context);
+
+      // Wait for user events
       DebuggerWaitForAction(debugger);
     } break;
     default:

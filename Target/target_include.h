@@ -1,3 +1,3 @@
 #pragma once
 
-void Method();
+void Method(int a, int b, float c);

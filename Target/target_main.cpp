@@ -7,29 +7,14 @@ void Function() {
   int a = 20 + c * 123;
 }
 
-int main() {
+int main(int argc, char **argv) {
   // OutputDebugStringA("HELLO DUDE!");
   Function();
-  Method();
+  Method(10, 20, 3.5f);
 
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
-  std::cout << "Hello";
+  for (int i = 0; i < 5; ++i) {
+    std::cout << "Hello";
+  }
 
   return 1;
 }

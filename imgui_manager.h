@@ -17,17 +17,17 @@ struct ImGuiLineInfo {
 struct ImGuiManager {
   std::function<void()> OnStepOver;
   std::function<void()> OnPrintCallstack;
-  std::function<void()> OnPrintRegisters;
   std::function<bool(DWORD64)> OnSetBreakpoint;
   std::function<bool(DWORD64)> OnRemoveBreakpoint;
   std::function<void()> OnContinue;
 
   std::unordered_map<std::string, std::vector<ImGuiLineInfo>> filename_to_source_code_line_info;
   std::set<DWORD64> breakpoints;
-  Line current_line;
+  DWORD64 current_line_hash;
 
   // Modules
   Registers *registers;
+  LocalVariables *local_variables;
 };
 
 template <typename ... T>
