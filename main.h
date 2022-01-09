@@ -36,6 +36,7 @@ static bool Global_IsOpen = true;
 #include "registers.h"
 #include "local_variable.h"
 #include "debugger.h"
+#include "source.h"
 #include "imgui_manager.h"
 
 static ImGuiLog Global_ImGuiLog;

@@ -11,8 +11,9 @@
 #include "registers.cpp"
 #include "local_variable.cpp"
 #include "directx11.cpp"
-#include "imgui_manager.cpp"
 #include "debugger.cpp"
+#include "source.cpp"
+#include "imgui_manager.cpp"
 
 void Test() {
   // TestLogAll("Hello", "World", 123, "Damn");
@@ -39,13 +40,10 @@ int main(int argc, char **argv) {
 
   Registers registers = CreateRegisters();
   LocalVariables local_variables = CreateLocalVariables();
+  Source source = CreateSource();
 
-  Debugger debugger = CreateDebugger(&registers, &local_variables, argv[1], continue_event);
-  ImGuiManager imgui_manager = CreateImGuiManager(&registers, &local_variables);
-  debugger.OnLoadSourceFiles =
-      [&](const std::unordered_map<std::string, std::vector<Line>>& source_filename_to_lines) {
-        ImGuiManagerLoadSourceFile(&imgui_manager, source_filename_to_lines);
-      };
+  Debugger debugger = CreateDebugger(&registers, &local_variables, &source, argv[1], continue_event);
+  ImGuiManager imgui_manager = CreateImGuiManager(&registers, &local_variables, &source);
   debugger.OnLineHashChange = [&](DWORD64 hash) {
     imgui_manager.current_line_hash = hash;
   };

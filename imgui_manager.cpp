@@ -1,5 +1,5 @@
 static ImGuiManager CreateImGuiManager(Registers *registers,
-                                       LocalVariables *local_variables) {
+                                       LocalVariables *local_variables, Source *source) {
   ImGuiManager result;
 
   IMGUI_CHECKVERSION();
@@ -13,6 +13,7 @@ static ImGuiManager CreateImGuiManager(Registers *registers,
 
   result.registers = registers;
   result.local_variables = local_variables;
+  result.source = source;
 
   return result;
 }
@@ -39,7 +40,7 @@ inline void ImGuiDrawRegisters(ImGuiManager *imgui_manager) {
 }
 
 inline void ImGuiDrawLocalVariables(ImGuiManager *imgui_manager) {
-  const auto &local_variables = imgui_manager->local_variables;
+  const auto local_variables = imgui_manager->local_variables;
   const auto &variables = local_variables->variables;
 
   ImGui::Begin("Local variables");
@@ -53,14 +54,14 @@ inline void ImGuiDrawLocalVariables(ImGuiManager *imgui_manager) {
 inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
   auto &breakpoints = imgui_manager->breakpoints;
   DWORD64 current_line_hash = imgui_manager->current_line_hash;
-  const auto &filename_to_source_code_line_info =
-      imgui_manager->filename_to_source_code_line_info;
+  const auto source = imgui_manager->source;
+  const auto &filename_to_lines = source->filename_to_lines;
 
   ImGui::Begin("Code");
   ImGui::BeginTabBar("Files");
 
-  for (auto it = filename_to_source_code_line_info.begin();
-       it != filename_to_source_code_line_info.end(); ++it) {
+  for (auto it = filename_to_lines.begin();
+       it != filename_to_lines.end(); ++it) {
     if (ImGui::BeginTabItem(it->first.c_str())) {
       for (size_t i = 0; i < it->second.size(); ++i) {
         static const float circle_offset_x = 17.0f;
@@ -197,40 +198,6 @@ static void ImGuiManagerBeginDirectx11() {
 static void ImGuiManagerEndDirectx11() {
   ImGui::Render();
   ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-}
-
-static void ImGuiManagerLoadSourceFile(
-    ImGuiManager *imgui_manager,
-    const std::unordered_map<std::string, std::vector<Line>>
-        &source_filename_to_lines) {
-  auto &filename_to_source_code_line_info =
-      imgui_manager->filename_to_source_code_line_info;
-
-  for (auto it = source_filename_to_lines.begin();
-       it != source_filename_to_lines.end(); ++it) {
-    std::ifstream *file = new std::ifstream(it->first);
-    if (!file->is_open()) {
-      continue;
-    }
-
-    // 1. Fill line context
-    std::string line;
-    std::vector<ImGuiLineInfo> source_code_lines;
-    for (size_t i = 0; std::getline(*file, line); ++i) {
-      source_code_lines.emplace_back(ImGuiLineInfo{0, 0, line});
-    }
-
-    // 2. Fill line index and hash from input
-    for (size_t i = 0; i < it->second.size(); ++i) {
-      const Line &line = it->second[i];
-      source_code_lines[line.index - 1].index = line.index;
-      source_code_lines[line.index - 1].hash = line.hash;
-    }
-
-    const std::string filename = GetFilenameFromPath(it->first);
-    filename_to_source_code_line_info.emplace(
-        std::make_pair(std::move(filename), std::move(source_code_lines)));
-  }
 }
 
 inline void ImGuiLogWriteToFile(ImGuiLog *imgui_log, const std::string &type,

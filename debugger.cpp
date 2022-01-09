@@ -1,5 +1,5 @@
 static Debugger CreateDebugger(Registers *registers,
-                               LocalVariables *local_variables,
+                               LocalVariables *local_variables, Source *source,
                                const std::string &process_name,
                                HANDLE continue_event) {
   Debugger result;
@@ -22,6 +22,7 @@ static Debugger CreateDebugger(Registers *registers,
   result.continue_event = continue_event;
   result.registers = registers;
   result.local_variables = local_variables;
+  result.source = source;
 
   return result;
 }
@@ -184,6 +185,26 @@ inline DWORD64 DebuggerGetTargetStartAddress(HANDLE process, HANDLE thread) {
   return result;
 }
 
+inline DWORD64 DebuggetGetFunctionStartAddress(CONTEXT context,
+                                               PROCESS_INFORMATION &pi) {
+  STACKFRAME64 stack = {};
+  stack.AddrPC.Offset = context.Eip;
+  stack.AddrPC.Mode = AddrModeFlat;
+  stack.AddrFrame.Offset = context.Ebp;
+  stack.AddrFrame.Mode = AddrModeFlat;
+  stack.AddrStack.Offset = context.Esp;
+  stack.AddrStack.Mode = AddrModeFlat;
+  if (!StackWalk64(IMAGE_FILE_MACHINE_I386, pi.hProcess, pi.hThread, &stack,
+                   &context, NULL, SymFunctionTableAccess64, SymGetModuleBase64,
+                   0)) {
+    return NULL;
+  }
+
+  return stack.AddrPC.Offset;
+}
+
+inline void DebuggerPlaceBreakpointsToAllLinesInFunction(Debugger *debugger) {}
+
 inline BOOL WINAPI EnumSourceFilesCallback(PSOURCEFILE SourceFile,
                                            PVOID UserContext) {
   Debugger *debugger = (Debugger *)UserContext;
@@ -194,24 +215,22 @@ inline BOOL WINAPI EnumSourceFilesCallback(PSOURCEFILE SourceFile,
   return TRUE;
 }
 
+struct EnumLinesCallbackData {
+  Debugger *debugger;
+  std::vector<Line> lines;
+};
+
 inline BOOL WINAPI EnumLinesCallback(PSRCCODEINFO LineInfo, PVOID UserContext) {
-  Debugger *debugger = (Debugger *)UserContext;
+  auto lines = reinterpret_cast<std::vector<Line> *>(UserContext);
 
   // LOG_IMGUI_TO_FILE(INFO, "Module: ", LineInfo->FileName, " - Line: ",
   // std::dec,
   //                   LineInfo->LineNumber, " - Address: ", std::hex,
   //                   LineInfo->Address)
 
-  // Fill partial info for placing breakpoints
-  DWORD64 filename_line_hash =
-      GetStringDWORDHash(LineInfo->FileName, LineInfo->LineNumber);
-
-  Line line{LineInfo->LineNumber, filename_line_hash};
-  debugger->address_to_line[LineInfo->Address] = line;
-  debugger->line_hash_to_address[filename_line_hash] = LineInfo->Address;
-
-  // Fill full info
-  debugger->source_filename_to_lines[LineInfo->FileName].emplace_back(line);
+  lines->emplace_back(
+      Line{LineInfo->LineNumber, LineInfo->Address,
+           GetStringDWORDHash(LineInfo->FileName, LineInfo->LineNumber)});
 
   return TRUE;
 }
@@ -247,13 +266,42 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
                          EnumSourceFilesCallback, debugger);
 
       for (int i = 0; i < debugger->source_files.size(); ++i) {
+        std::vector<Line> lines;
         SymEnumLines(pi.hProcess, base, NULL, debugger->source_files[i].c_str(),
-                     EnumLinesCallback, debugger);
-      }
+                     EnumLinesCallback, (PVOID)&lines);
 
-      // Send source files with debug symbols
-      if (debugger->OnLoadSourceFiles)
-        debugger->OnLoadSourceFiles(debugger->source_filename_to_lines);
+        // Load text
+        std::ifstream file(debugger->source_files[i]);
+        if (!file.is_open()) {
+          LOG_IMGUI(INFO, "Unable to open source file ",
+                    debugger->source_files[i]);
+          continue;
+        }
+
+        std::string line;
+        std::vector<std::string> text;
+        for (size_t j = 0; std::getline(file, line); ++j) {
+          text.emplace_back(std::move(line));
+        }
+
+        // Copy text
+        for (size_t j = 0; j < lines.size(); ++j) {
+          // TODO: Add lines that is not present in debugger info
+          lines[j].text = text[lines[j].index - 1];
+        }
+
+        // Line specific staff
+        for (size_t j = 0; j < lines.size(); ++j) {
+          debugger->address_to_line[lines[j].address] = lines[j];
+          debugger->line_hash_to_address[lines[j].hash] = lines[j].address;
+        }
+
+        auto source = debugger->source;
+        const std::string filename =
+            GetFilenameFromPath(debugger->source_files[i]);
+        source->filename_to_lines.emplace(
+            std::make_pair(std::move(filename), std::move(lines)));
+      }
     }
   } else {
     LOG_IMGUI(DebuggerLoadTargetModules, "Unable to load ", filename)
@@ -497,9 +545,15 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
                               pi.hProcess,
                               (DWORD64)create_process_debug_info.lpBaseOfImage);
 
+    CONTEXT context = {};
+    context.ContextFlags = CONTEXT_ALL;
+    GetThreadContext(pi.hThread, &context);
+
     // Replace first instruction with int3
     DWORD64 start_address =
         DebuggerGetTargetStartAddress(pi.hProcess, pi.hThread);
+
+    // DWORD64 start_address = DebuggetGetFunctionStartAddress(context, pi);
 
     const Line &line = address_to_line[start_address];
 
