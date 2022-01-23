@@ -185,8 +185,16 @@ inline DWORD64 DebuggerGetTargetStartAddress(HANDLE process, HANDLE thread) {
   return result;
 }
 
-inline DWORD64 DebuggetGetFunctionStartAddress(CONTEXT context,
-                                               PROCESS_INFORMATION &pi) {
+struct Function {
+  DWORD64 start_address;
+  DWORD64 end_address;
+};
+
+inline Function DebuggerGetFunctionInfo(Debugger *debugger, CONTEXT context) {
+  Function result = {};
+
+  auto pi = debugger->pi;
+
   STACKFRAME64 stack = {};
   stack.AddrPC.Offset = context.Eip;
   stack.AddrPC.Mode = AddrModeFlat;
@@ -195,15 +203,36 @@ inline DWORD64 DebuggetGetFunctionStartAddress(CONTEXT context,
   stack.AddrStack.Offset = context.Esp;
   stack.AddrStack.Mode = AddrModeFlat;
   if (!StackWalk64(IMAGE_FILE_MACHINE_I386, pi.hProcess, pi.hThread, &stack,
-                   &context, NULL, SymFunctionTableAccess64, SymGetModuleBase64,
-                   0)) {
-    return NULL;
+    &context, NULL, SymFunctionTableAccess64, SymGetModuleBase64,
+    0)) {
+    return result;
   }
 
-  return stack.AddrPC.Offset;
+  PSYMBOL_INFO symbol_info =
+    (PSYMBOL_INFO) new char[sizeof(SYMBOL_INFO) + MAX_SYM_NAME];
+  symbol_info->MaxNameLen = MAX_SYM_NAME;
+  symbol_info->SizeOfStruct = sizeof(SYMBOL_INFO);
+  DWORD64 displacement;
+  SymFromAddr(pi.hProcess, stack.AddrPC.Offset, &displacement, symbol_info);
+
+  result.start_address = stack.AddrPC.Offset;
+  result.end_address = stack.AddrPC.Offset + symbol_info->Size - 4; // -4 is a fix
+  // TODO: If symbol_info->Size == 0, error
+
+  return result;
 }
 
-inline void DebuggerPlaceBreakpointsToAllLinesInFunction(Debugger *debugger) {}
+inline void DebuggerPlaceFunctionInvisibleBreakpoints(Debugger *debugger, CONTEXT context) {
+  const auto source = debugger->source;
+  const auto &filename_to_lines = source->filename_to_lines;
+  auto pi = debugger->pi;
+  
+  Function function_info = DebuggerGetFunctionInfo(debugger, context);
+  for (auto it = filename_to_lines.begin(); it != filename_to_lines.end(); ++it) {
+    // TODO: Place breakpoints
+    
+  }
+}
 
 inline BOOL WINAPI EnumSourceFilesCallback(PSOURCEFILE SourceFile,
                                            PVOID UserContext) {
@@ -216,19 +245,28 @@ inline BOOL WINAPI EnumSourceFilesCallback(PSOURCEFILE SourceFile,
 }
 
 struct EnumLinesCallbackData {
-  Debugger *debugger;
+  PROCESS_INFORMATION pi;
   std::vector<Line> lines;
 };
 
 inline BOOL WINAPI EnumLinesCallback(PSRCCODEINFO LineInfo, PVOID UserContext) {
-  auto lines = reinterpret_cast<std::vector<Line> *>(UserContext);
-
+  // auto lines = reinterpret_cast<std::vector<Line> *>(UserContext);
+  auto data = reinterpret_cast<EnumLinesCallbackData *>(UserContext);
+  auto pi = data->pi;
+  auto &lines = data->lines;
   // LOG_IMGUI_TO_FILE(INFO, "Module: ", LineInfo->FileName, " - Line: ",
   // std::dec,
   //                   LineInfo->LineNumber, " - Address: ", std::hex,
   //                   LineInfo->Address)
+  IMAGEHLP_LINE64 line = {};
+  line.SizeOfStruct = sizeof(line);
 
-  lines->emplace_back(
+  DWORD displacement;
+  if (SymGetLineFromAddr64(pi.hProcess, LineInfo->Address,
+                           &displacement, &line)) {
+  }
+
+  lines.emplace_back(
       Line{LineInfo->LineNumber, LineInfo->Address,
            GetStringDWORDHash(LineInfo->FileName, LineInfo->LineNumber)});
 
@@ -266,9 +304,10 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
                          EnumSourceFilesCallback, debugger);
 
       for (int i = 0; i < debugger->source_files.size(); ++i) {
-        std::vector<Line> lines;
+        // std::vector<Line> lines;
+        EnumLinesCallbackData data = {debugger->pi};
         SymEnumLines(pi.hProcess, base, NULL, debugger->source_files[i].c_str(),
-                     EnumLinesCallback, (PVOID)&lines);
+                     EnumLinesCallback, (PVOID)&data);
 
         // Load text
         std::ifstream file(debugger->source_files[i]);
@@ -285,6 +324,7 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
         }
 
         // Copy text
+        auto &lines = data.lines;
         for (size_t j = 0; j < lines.size(); ++j) {
           // TODO: Add lines that is not present in debugger info
           lines[j].text = text[lines[j].index - 1];
@@ -642,6 +682,11 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         if (it == breakpoints.end()) {
           invisible_breakpoints.erase(it->first);
         }
+
+        RegistersUpdateFromContext(debugger->registers,
+                                 debugger->original_context);
+        DebuggerGetLocalVariables(debugger, debugger->original_context);
+        DebuggerPlaceFunctionInvisibleBreakpoints(debugger, debugger->original_context);
       }
     } break;
     case EXCEPTION_SINGLE_STEP: {
@@ -651,10 +696,6 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         DebuggerRestoreInstruction(debugger, debugger->original_context.Eip,
                                    0xCC);
       }
-
-      RegistersUpdateFromContext(debugger->registers,
-                                 debugger->original_context);
-      DebuggerGetLocalVariables(debugger, debugger->original_context);
 
       // Wait for user events
       DebuggerWaitForAction(debugger);
