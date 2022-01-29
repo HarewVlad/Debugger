@@ -10,6 +10,7 @@
 #include "utils.cpp"
 #include "registers.cpp"
 #include "local_variable.cpp"
+#include "breakpoint.cpp"
 #include "directx11.cpp"
 #include "debugger.cpp"
 #include "source.cpp"
@@ -38,12 +39,13 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  Registers registers = CreateRegisters();
-  LocalVariables local_variables = CreateLocalVariables();
-  Source source = CreateSource();
+  Registers registers = {}; // To clear
+  LocalVariables local_variables;
+  Source source;
+  Breakpoints breakpoints;
 
-  Debugger debugger = CreateDebugger(&registers, &local_variables, &source, argv[1], continue_event);
-  ImGuiManager imgui_manager = CreateImGuiManager(&registers, &local_variables, &source);
+  Debugger debugger = CreateDebugger(&registers, &local_variables, &source, &breakpoints, argv[1], continue_event);
+  ImGuiManager imgui_manager = CreateImGuiManager(&registers, &local_variables, &source, &breakpoints);
   debugger.OnLineHashChange = [&](DWORD64 hash) {
     imgui_manager.current_line_hash = hash;
   };

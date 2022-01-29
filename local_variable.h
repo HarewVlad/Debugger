@@ -4,5 +4,5 @@ struct LocalVariable {
 };
 
 struct LocalVariables {
-  std::vector<LocalVariable> variables;
+  std::vector<LocalVariable> data;
 };

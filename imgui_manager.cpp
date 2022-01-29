@@ -1,5 +1,7 @@
 static ImGuiManager CreateImGuiManager(Registers *registers,
-                                       LocalVariables *local_variables, Source *source) {
+                                       LocalVariables *local_variables,
+                                       Source *source,
+                                       Breakpoints *breakpoints) {
   ImGuiManager result;
 
   IMGUI_CHECKVERSION();
@@ -14,6 +16,7 @@ static ImGuiManager CreateImGuiManager(Registers *registers,
   result.registers = registers;
   result.local_variables = local_variables;
   result.source = source;
+  result.breakpoints = breakpoints;
 
   return result;
 }
@@ -41,27 +44,26 @@ inline void ImGuiDrawRegisters(ImGuiManager *imgui_manager) {
 
 inline void ImGuiDrawLocalVariables(ImGuiManager *imgui_manager) {
   const auto local_variables = imgui_manager->local_variables;
-  const auto &variables = local_variables->variables;
+  const auto &data = local_variables->data;
 
   ImGui::Begin("Local variables");
-  for (size_t i = 0; i < variables.size(); ++i) {
-    ImGui::Text("Name: %s, Value = %s", variables[i].name.c_str(),
-                variables[i].value.c_str());
+  for (size_t i = 0; i < data.size(); ++i) {
+    ImGui::Text("Name: %s, Value = %s", data[i].name.c_str(),
+                data[i].value.c_str());
   }
   ImGui::End();
 }
 
 inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
-  auto &breakpoints = imgui_manager->breakpoints;
+  auto &breakpoints = imgui_manager->breakpoints->data;
   DWORD64 current_line_hash = imgui_manager->current_line_hash;
-  const auto source = imgui_manager->source;
-  const auto &filename_to_lines = source->filename_to_lines;
+  const auto &filename_to_lines = imgui_manager->source->filename_to_lines;
 
   ImGui::Begin("Code");
   ImGui::BeginTabBar("Files");
 
-  for (auto it = filename_to_lines.begin();
-       it != filename_to_lines.end(); ++it) {
+  for (auto it = filename_to_lines.begin(); it != filename_to_lines.end();
+       ++it) {
     if (ImGui::BeginTabItem(it->first.c_str())) {
       for (size_t i = 0; i < it->second.size(); ++i) {
         static const float circle_offset_x = 17.0f;
@@ -73,7 +75,7 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
         ImGui::SameLine();
 
         // Breakpoints
-        if (breakpoints.find(it->second[i].hash) != breakpoints.end()) {
+        if (breakpoints.find(it->second[i].address) != breakpoints.end()) {
           // Draw red circle
           ImDrawList *draw_list = ImGui::GetWindowDrawList();
 
@@ -104,14 +106,12 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
         ImGui::PushID(i);
         if (ImGui::Button(it->second[i].text.c_str())) {
           if (breakpoints.find(it->second[i].hash) != breakpoints.end()) {
-            if (imgui_manager->OnRemoveBreakpoint &&
-                imgui_manager->OnRemoveBreakpoint(it->second[i].hash)) {
-              breakpoints.erase(it->second[i].hash);
+            if (imgui_manager->OnRemoveBreakpoint) {
+              imgui_manager->OnRemoveBreakpoint(it->second[i].hash);
             }
           } else {
-            if (imgui_manager->OnSetBreakpoint &&
-                imgui_manager->OnSetBreakpoint(it->second[i].hash)) {
-              breakpoints.insert(it->second[i].hash);
+            if (imgui_manager->OnSetBreakpoint) {
+              imgui_manager->OnSetBreakpoint(it->second[i].hash);
             }
           }
         }

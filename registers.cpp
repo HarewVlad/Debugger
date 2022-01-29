@@ -1,9 +1,3 @@
-static Registers CreateRegisters() {
-  Registers result = {};
-
-  return result;
-}
-
 // TODO: Make for x64
 static void RegistersUpdateFromContext(Registers *registers, CONTEXT context) {
   ASSIGN_P_V(registers, context, Edi);
