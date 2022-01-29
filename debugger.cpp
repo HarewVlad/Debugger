@@ -587,8 +587,6 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         //               CreateBreakpoint(pi.hProcess, end_address);
         //         }
         // #endif
-        // ISSUE: There was an invisible breakpoint, we read it, and get 0xCC as
-        // original instruction
         Breakpoint breakpoint = {};
         if (breakpoints.find(exception_address) != breakpoints.end()) {
           breakpoint = breakpoints[exception_address];
