@@ -16,6 +16,8 @@
 #include "source.cpp"
 #include "imgui_manager.cpp"
 
+// TODO: Why use hash to place breakpoints, use address lol
+
 void Test() {
   // TestLogAll("Hello", "World", 123, "Damn");
   // LOG(SHIT) << "SFJSDF" << 123;
@@ -46,22 +48,25 @@ int main(int argc, char **argv) {
 
   Debugger debugger = CreateDebugger(&registers, &local_variables, &source, &breakpoints, argv[1], continue_event);
   ImGuiManager imgui_manager = CreateImGuiManager(&registers, &local_variables, &source, &breakpoints);
-  debugger.OnLineHashChange = [&](DWORD64 hash) {
-    imgui_manager.current_line_hash = hash;
+  debugger.OnLineAddressChange = [&](DWORD64 address) {
+    imgui_manager.current_line_address = address;
   };
   imgui_manager.OnStepOver = [&]() {
-    DebuggerStepOver(&debugger);
-
+    // DebuggerStepOver(&debugger);
+    DebuggerSetState(&debugger, DebuggerState::STEP_OVER);
     SetEvent(continue_event);
   };
   imgui_manager.OnPrintCallstack = [&]() { DebuggerPrintCallstack(&debugger); };
-  imgui_manager.OnSetBreakpoint = [&](DWORD64 hash) -> bool {
-    return DebuggerSetBreakpoint(&debugger, hash);
+  imgui_manager.OnSetBreakpoint = [&](DWORD64 address) -> bool {
+    return DebuggerSetBreakpoint(&debugger, address);
   };
-  imgui_manager.OnRemoveBreakpoint = [&](DWORD64 hash) -> bool {
-    return DebuggerRemoveBreakpoint(&debugger, hash);
+  imgui_manager.OnRemoveBreakpoint = [&](DWORD64 address) -> bool {
+    return DebuggerRemoveBreakpoint(&debugger, address);
   };
-  imgui_manager.OnContinue = [&]() { SetEvent(continue_event); };
+  imgui_manager.OnContinue = [&]() {
+    DebuggerSetState(&debugger, DebuggerState::CONTINUE);
+    SetEvent(continue_event);
+  };
 
   std::thread thread([&]() {
     Directx11 *directx = CreateDirectx11();

@@ -1,14 +1,19 @@
+enum class DebuggerState {
+  NONE,
+  STEP_OVER,
+  CONTINUE
+};
+
 struct Line {
   DWORD index;
   DWORD64 address;
-  DWORD64 hash; // filename + line index = hash
   std::string text;
 
   Line &operator=(const Line &other) {
     if (this != &other) {
       index = other.index;
-      hash = other.hash;
       address = other.address;
+      text = other.text; // TODO: Mb replace with move later
     } else {
       assert(0);
     }
@@ -86,14 +91,10 @@ struct Debugger {
   STARTUPINFO si;
   PROCESS_INFORMATION pi;
   std::vector<std::string> source_files;
-  std::map<DWORD64, Line> address_to_line; // Used to get line based on address
-  std::unordered_map<DWORD64, DWORD64>
-      line_hash_to_address; // Used to set and remove breakpoints using line
-                            // hash
   CONTEXT original_context;
   HANDLE continue_event;
-  DWORD64 current_line_address;
-  std::function<void(DWORD64)> OnLineHashChange;
+  std::function<void(DWORD64)> OnLineAddressChange;
+  DebuggerState state;
 
   // Local modules
   Breakpoints invisible_breakpoints;

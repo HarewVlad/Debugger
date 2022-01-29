@@ -56,7 +56,7 @@ inline void ImGuiDrawLocalVariables(ImGuiManager *imgui_manager) {
 
 inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
   auto &breakpoints = imgui_manager->breakpoints->data;
-  DWORD64 current_line_hash = imgui_manager->current_line_hash;
+  DWORD64 current_line_address = imgui_manager->current_line_address;
   const auto &filename_to_lines = imgui_manager->source->filename_to_lines;
 
   ImGui::Begin("Code");
@@ -90,7 +90,7 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
 
         // Draw cursor
         float h = 4 / 7.0f;
-        if (current_line_hash == it->second[i].hash) {
+        if (current_line_address == it->second[i].address) {
           h = 8 / 7.0f;
         }
 
@@ -105,13 +105,13 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
                              ImGui::GetCursorPosY() - line_number_offset_y});
         ImGui::PushID(i);
         if (ImGui::Button(it->second[i].text.c_str())) {
-          if (breakpoints.find(it->second[i].hash) != breakpoints.end()) {
+          if (breakpoints.find(it->second[i].address) != breakpoints.end()) {
             if (imgui_manager->OnRemoveBreakpoint) {
-              imgui_manager->OnRemoveBreakpoint(it->second[i].hash);
+              imgui_manager->OnRemoveBreakpoint(it->second[i].address);
             }
           } else {
             if (imgui_manager->OnSetBreakpoint) {
-              imgui_manager->OnSetBreakpoint(it->second[i].hash);
+              imgui_manager->OnSetBreakpoint(it->second[i].address);
             }
           }
         }

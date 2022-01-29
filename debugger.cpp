@@ -3,7 +3,7 @@ static Debugger CreateDebugger(Registers *registers,
                                Breakpoints *breakpoints,
                                const std::string &process_name,
                                HANDLE continue_event) {
-  Debugger result;
+  Debugger result = {};
 
   STARTUPINFO si = {};
   PROCESS_INFORMATION pi = {};
@@ -27,6 +27,11 @@ static Debugger CreateDebugger(Registers *registers,
   result.breakpoints = breakpoints;
 
   return result;
+}
+
+static inline void DebuggerSetState(Debugger *debugger, DebuggerState state) {
+  // There will be some logic later for sure
+  debugger->state = state;
 }
 
 struct EnumSymbolsCallbackData {
@@ -233,17 +238,23 @@ inline void DebuggerPlaceFunctionInvisibleBreakpoints(Debugger *debugger,
   const auto source = debugger->source;
   const auto &filename_to_lines = source->filename_to_lines;
   const auto &address_to_line = source->address_to_line;
-  auto &invisible_breakpoints = debugger->invisible_breakpoints;
+  auto &invisible_breakpoints = debugger->invisible_breakpoints.data;
+  const auto &breakpoints = debugger->breakpoints->data;
   auto pi = debugger->pi;
 
   Function function_info = DebuggerGetFunctionInfo(debugger, context);
   auto begin = address_to_line.find(function_info.start_address);
   auto end = address_to_line.find(function_info.end_address);
   for (auto it = begin; it != end; ++it) {
-    // TODO: Fix
-    // if (invisible_breakpoints.find(it->first) == invisible_breakpoints.end())
-    //   invisible_breakpoints[it->first] = CreateBreakpoint(pi.hProcess,
-    //   it->first);
+    if (breakpoints.find(it->first) != breakpoints.end()) {
+      continue;
+    }
+
+    if (invisible_breakpoints.find(it->first) != invisible_breakpoints.end()) {
+      continue;
+    }
+
+    invisible_breakpoints[it->first] = CreateBreakpoint(pi.hProcess, it->first);
   }
 }
 
@@ -279,9 +290,7 @@ inline BOOL WINAPI EnumLinesCallback(PSRCCODEINFO LineInfo, PVOID UserContext) {
   //                          &displacement, &line)) {
   // }
 
-  lines.emplace_back(
-      Line{LineInfo->LineNumber, LineInfo->Address,
-           GetStringDWORDHash(LineInfo->FileName, LineInfo->LineNumber)});
+  lines.emplace_back(Line{LineInfo->LineNumber, LineInfo->Address});
 
   return TRUE;
 }
@@ -343,12 +352,6 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
           lines[j].text = text[lines[j].index - 1];
         }
 
-        // Line specific staff
-        for (size_t j = 0; j < lines.size(); ++j) {
-          debugger->address_to_line[lines[j].address] = lines[j];
-          debugger->line_hash_to_address[lines[j].hash] = lines[j].address;
-        }
-
         auto source = debugger->source;
         const std::string filename =
             GetFilenameFromPath(debugger->source_files[i]);
@@ -368,38 +371,27 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
   return true;
 }
 
-static bool DebuggerRemoveBreakpoint(Debugger *debugger, DWORD64 hash) {
-  const auto &line_hash_to_address = debugger->line_hash_to_address;
+static bool DebuggerRemoveBreakpoint(Debugger *debugger, DWORD64 address) {
   auto &breakpoints = debugger->breakpoints->data;
-  const auto pi = debugger->pi;
+  auto pi = debugger->pi;
 
-  auto line_hash_to_address_it = line_hash_to_address.find(hash);
-  if (line_hash_to_address_it != line_hash_to_address.end()) {
-    if (breakpoints.find(line_hash_to_address_it->second) !=
-        breakpoints.end()) {
+  if (breakpoints.find(address) != breakpoints.end()) {
+    Breakpoint breakpoint = breakpoints[address];
 
-      Breakpoint breakpoint = breakpoints[line_hash_to_address_it->second];
-
-      // Restore original instruction
-      DWORD read_bytes;
-      if (!WriteProcessMemory(pi.hProcess, (void *)breakpoint.address,
-                              &breakpoint.original_instruction, 1,
-                              &read_bytes)) {
-        LOG_IMGUI(DebuggerRemoveBreakpoint,
-                  "WriteProcessMemory failed, error = ", GetLastError())
-        return false;
-      }
-      FlushInstructionCache(pi.hProcess, (void *)breakpoint.address, 1);
-
-      // Remove breakpoint
-      breakpoints.erase(line_hash_to_address_it->second);
-    } else {
-      LOG_IMGUI(DebuggerRemoveBreakpoint, "Breakpoint for ", hash,
-                " doesn't exists!")
+    // Restore original instruction
+    DWORD read_bytes;
+    if (!WriteProcessMemory(pi.hProcess, (void *)breakpoint.address,
+                            &breakpoint.original_instruction, 1, &read_bytes)) {
+      LOG_IMGUI(DebuggerRemoveBreakpoint,
+                "WriteProcessMemory failed, error = ", GetLastError())
+      return false;
     }
+    FlushInstructionCache(pi.hProcess, (void *)breakpoint.address, 1);
+
+    breakpoints.erase(address);
   } else {
-    LOG_IMGUI(DebuggerRemoveBreakpoint, "Unable to remove breakpoint for ",
-              hash);
+    LOG_IMGUI(DebuggerRemoveBreakpoint, "Breakpoint for ", address,
+              " doesn't exists!")
   }
 
   return true;
@@ -463,47 +455,21 @@ static void DebuggerPrintCallstack(Debugger *debugger) {
   } while (stack.AddrReturn.Offset != 0);
 }
 
-static bool DebuggerStepOver(Debugger *debugger) {
+static bool DebuggerSetBreakpoint(Debugger *debugger, DWORD64 address) {
+  auto &breakpoints = debugger->breakpoints->data;
   auto pi = debugger->pi;
-  const auto &address_to_line = debugger->address_to_line;
-  auto &breakpoints = debugger->breakpoints->data;
   auto &invisible_breakpoints = debugger->invisible_breakpoints.data;
-  const auto &current_line_address = debugger->current_line_address;
 
-  auto current_line_it = address_to_line.find(current_line_address);
-  ++current_line_it;
-
-  if (breakpoints.find(current_line_it->first) == breakpoints.end()) {
-    invisible_breakpoints[current_line_it->first] =
-        CreateBreakpoint(pi.hProcess, current_line_it->first);
+  // If we already have invisible breakpoint there, just move it to "user"
+  // breakpoints
+  if (invisible_breakpoints.find(address) != invisible_breakpoints.end()) {
+    breakpoints[address] = invisible_breakpoints[address];
+    invisible_breakpoints.erase(address);
+  } else if (breakpoints.find(address) == breakpoints.end()) {
+    breakpoints[address] = CreateBreakpoint(pi.hProcess, address);
   } else {
-    LOG_IMGUI(DebuggerStepOver, "Breakpoint \"", current_line_it->second.hash,
-              "\", ", current_line_it->second.index, " already exists")
-  }
-
-  return true;
-}
-
-// TODO: Use hash created by ImGuiManager
-static bool DebuggerSetBreakpoint(Debugger *debugger, DWORD64 hash) {
-  const auto &line_hash_to_address = debugger->line_hash_to_address;
-  auto &breakpoints = debugger->breakpoints->data;
-  const auto pi = debugger->pi;
-
-  auto line_hash_to_address_it = line_hash_to_address.find(hash);
-  if (line_hash_to_address_it != line_hash_to_address.end()) {
-    if (breakpoints.find(line_hash_to_address_it->second) ==
-        breakpoints.end()) {
-      breakpoints[line_hash_to_address_it->second] =
-          CreateBreakpoint(pi.hProcess, line_hash_to_address_it->second);
-      ;
-    } else {
-      LOG_IMGUI(DebuggerSetBreakpoint, "Breakpoint for", hash,
-                ", already present!")
-      return false;
-    }
-  } else {
-    LOG_IMGUI(DebuggerSetBreakpoint, "Unable to set breakpoint for ", hash)
+    LOG_IMGUI(DebuggerSetBreakpoint, "Breakpoint for", address,
+              ", already present!")
     return false;
   }
 
@@ -523,7 +489,7 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
   auto pi = debugger->pi;
   auto &breakpoints = debugger->breakpoints->data;
   auto &invisible_breakpoints = debugger->invisible_breakpoints.data;
-  auto &address_to_line = debugger->address_to_line;
+  auto &address_to_line = debugger->source->address_to_line;
 
   continue_status = DBG_CONTINUE;
 
@@ -552,12 +518,9 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
 
     const Line &line = address_to_line[start_address];
 
-    if (debugger->OnLineHashChange) {
-      debugger->OnLineHashChange(line.hash);
+    if (debugger->OnLineAddressChange) {
+      debugger->OnLineAddressChange(line.address);
     }
-
-    // TODO: Layter remove it to user to place that breakpoint
-    // TODO: Mb make it special breakpoint
 
     breakpoints[line.address] = CreateBreakpoint(pi.hProcess, line.address);
   } break;
@@ -594,13 +557,11 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
 
         const Line &line = address_to_line[exception_address];
 
-        LOG_IMGUI(DebuggerProcessEvent, "Breakpoint at (", line.hash, ", ",
-                  std::dec, line.index, ", ", std::hex, exception_address, ')');
+        LOG_IMGUI(DebuggerProcessEvent, "Breakpoint at (", std::dec, line.index,
+                  ", ", std::hex, exception_address, ')');
 
-        debugger->current_line_address = exception_address;
-
-        if (debugger->OnLineHashChange) {
-          debugger->OnLineHashChange(line.hash);
+        if (debugger->OnLineAddressChange) {
+          debugger->OnLineAddressChange(line.address);
         }
 
         CONTEXT context = {};
@@ -616,18 +577,20 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         context.EFlags |= 0x100; // Trap flag
         SetThreadContext(pi.hThread, &context);
 
-#ifdef BREAKPOINT_END_ADDRESS
-        DWORD64 end_address = DebuggetGetFunctionReturnAddress(context, pi);
-        if (invisible_breakpoints.find(end_address) ==
-            invisible_breakpoints.end()) {
-          invisible_breakpoints[end_address] =
-              CreateBreakpoint(pi.hProcess, end_address);
-        }
-#endif
-
+        // // I don't remember why it has been done =)
+        // #ifdef BREAKPOINT_END_ADDRESS
+        //         DWORD64 end_address =
+        //         DebuggetGetFunctionReturnAddress(context, pi); if
+        //         (invisible_breakpoints.find(end_address) ==
+        //             invisible_breakpoints.end()) {
+        //           invisible_breakpoints[end_address] =
+        //               CreateBreakpoint(pi.hProcess, end_address);
+        //         }
+        // #endif
+        // ISSUE: There was an invisible breakpoint, we read it, and get 0xCC as
+        // original instruction
         Breakpoint breakpoint = {};
-        const auto it = breakpoints.find(exception_address);
-        if (it != breakpoints.end()) {
+        if (breakpoints.find(exception_address) != breakpoints.end()) {
           breakpoint = breakpoints[exception_address];
         } else {
           breakpoint = invisible_breakpoints[exception_address];
@@ -635,28 +598,29 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
 
         BreakpointRestore(pi.hProcess, breakpoint);
 
-        // So it is an invisible breakpoint, need to delete
-        if (it == breakpoints.end()) {
-          invisible_breakpoints.erase(it->first);
-        }
-
         RegistersUpdateFromContext(debugger->registers,
                                    debugger->original_context);
         DebuggerGetLocalVariables(debugger, debugger->original_context);
+        DebuggerPlaceFunctionInvisibleBreakpoints(debugger,
+                                                  debugger->original_context);
       }
     } break;
     case EXCEPTION_SINGLE_STEP: {
       // Reinstall exception if there is a breakpoint still
-      if (breakpoints.find(debugger->original_context.Eip) !=
-          breakpoints.end()) {
-        BreakpointRestore(pi.hProcess, debugger->original_context.Eip, 0xCC);
+      // TODO: Rethink, refactor
+      bool is_invisible_breakpoint = false;
+      if (invisible_breakpoints.find(debugger->original_context.Eip) !=
+          invisible_breakpoints.end()) {
+        is_invisible_breakpoint = true;
       }
 
-      // DebuggerPlaceFunctionInvisibleBreakpoints(debugger,
-      // debugger->original_context);
+      BreakpointRestore(pi.hProcess, debugger->original_context.Eip, 0xCC);
 
-      // Wait for user events
-      DebuggerWaitForAction(debugger);
+      if (debugger->state == DebuggerState::CONTINUE &&
+          is_invisible_breakpoint) {
+      } else {
+        DebuggerWaitForAction(debugger);
+      }
     } break;
     default:
       if (exception_debug_info.dwFirstChance == 1) {

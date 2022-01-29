@@ -15,7 +15,7 @@ struct ImGuiManager {
   std::function<bool(DWORD64)> OnRemoveBreakpoint;
   std::function<void()> OnContinue;
 
-  DWORD64 current_line_hash;
+  DWORD64 current_line_address;
 
   // Modules
   Registers *registers;
