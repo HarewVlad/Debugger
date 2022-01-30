@@ -114,9 +114,10 @@ inline BOOL WINAPI EnumSymbolsCallback(PSYMBOL_INFO pSymInfo, ULONG SymbolSize,
   return TRUE;
 }
 
-inline void DebuggerGetLocalVariables(Debugger *debugger, CONTEXT context) {
+inline void DebuggerGetLocalVariables(Debugger *debugger) {
   const auto &pi = debugger->pi;
   auto &local_variables = debugger->local_variables;
+  auto context = debugger->original_context;
 
   STACKFRAME64 stack = {};
   stack.AddrPC.Offset = context.Eip;
@@ -227,34 +228,38 @@ inline Function DebuggerGetFunctionInfo(Debugger *debugger, CONTEXT context) {
 
   result.start_address = stack.AddrPC.Offset;
   result.end_address =
-      stack.AddrPC.Offset + symbol_info->Size - 4; // -4 is a fix
+      symbol_info->Address + symbol_info->Size - 4; // -4 is a fix
   // TODO: If symbol_info->Size == 0, error
 
   return result;
 }
 
-inline void DebuggerPlaceFunctionInvisibleBreakpoints(Debugger *debugger,
-                                                      CONTEXT context) {
+inline void DebuggerPlaceFunctionInvisibleBreakpoints(Debugger *debugger) {
   const auto source = debugger->source;
   const auto &filename_to_lines = source->filename_to_lines;
   const auto &address_to_line = source->address_to_line;
   auto &invisible_breakpoints = debugger->invisible_breakpoints.data;
   const auto &breakpoints = debugger->breakpoints->data;
+  auto context = debugger->original_context;
   auto pi = debugger->pi;
 
   Function function_info = DebuggerGetFunctionInfo(debugger, context);
   auto begin = address_to_line.find(function_info.start_address);
   auto end = address_to_line.find(function_info.end_address);
-  for (auto it = begin; it != end; ++it) {
-    if (breakpoints.find(it->first) != breakpoints.end()) {
-      continue;
-    }
+  if (end != address_to_line.end()) {
+    for (auto it = begin; it != end; ++it) {
+      if (breakpoints.find(it->first) != breakpoints.end()) {
+        continue;
+      }
 
-    if (invisible_breakpoints.find(it->first) != invisible_breakpoints.end()) {
-      continue;
-    }
+      if (invisible_breakpoints.find(it->first) !=
+          invisible_breakpoints.end()) {
+        continue;
+      }
 
-    invisible_breakpoints[it->first] = CreateBreakpoint(pi.hProcess, it->first);
+      invisible_breakpoints[it->first] =
+          CreateBreakpoint(pi.hProcess, it->first);
+    }
   }
 }
 
@@ -326,7 +331,6 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
                          EnumSourceFilesCallback, debugger);
 
       for (int i = 0; i < debugger->source_files.size(); ++i) {
-        // std::vector<Line> lines;
         EnumLinesCallbackData data = {debugger->pi};
         SymEnumLines(pi.hProcess, base, NULL, debugger->source_files[i].c_str(),
                      EnumLinesCallback, (PVOID)&data);
@@ -340,27 +344,29 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
         }
 
         std::string line;
-        std::vector<std::string> text;
+        std::vector<Line> lines_corrected;
         for (size_t j = 0; std::getline(file, line); ++j) {
-          text.emplace_back(std::move(line));
+          lines_corrected.emplace_back(Line{0, 0, std::move(line)});
         }
 
-        // Copy text
-        auto &lines = data.lines;
-        for (size_t j = 0; j < lines.size(); ++j) {
-          // TODO: Add lines that is not present in debugger info
-          lines[j].text = text[lines[j].index - 1];
+        const auto &debug_lines = data.lines;
+        for (size_t j = 0; j < debug_lines.size(); ++j) {
+          DWORD index = debug_lines[j].index;
+          lines_corrected[index - 1].index = index;
+          lines_corrected[index - 1].address = debug_lines[j].address;
         }
 
         auto source = debugger->source;
         const std::string filename =
             GetFilenameFromPath(debugger->source_files[i]);
 
-        for (size_t j = 0; j < lines.size(); ++j) {
-          source->address_to_line[lines[j].address] = lines[j];
+        for (size_t j = 0; j < lines_corrected.size(); ++j) {
+          if (lines_corrected[j].address) // TODO: Rethink
+            source->address_to_line[lines_corrected[j].address] =
+                lines_corrected[j];
         }
         source->filename_to_lines.emplace(
-            std::make_pair(std::move(filename), std::move(lines)));
+            std::make_pair(std::move(filename), std::move(lines_corrected)));
       }
     }
   } else {
@@ -459,6 +465,12 @@ static bool DebuggerSetBreakpoint(Debugger *debugger, DWORD64 address) {
   auto &breakpoints = debugger->breakpoints->data;
   auto pi = debugger->pi;
   auto &invisible_breakpoints = debugger->invisible_breakpoints.data;
+
+  // TODO: Rethink lines that are not in debugger info
+  if (!address) {
+    // Wrong address
+    return false;
+  }
 
   // If we already have invisible breakpoint there, just move it to "user"
   // breakpoints
@@ -598,9 +610,8 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
 
         RegistersUpdateFromContext(debugger->registers,
                                    debugger->original_context);
-        DebuggerGetLocalVariables(debugger, debugger->original_context);
-        DebuggerPlaceFunctionInvisibleBreakpoints(debugger,
-                                                  debugger->original_context);
+        DebuggerGetLocalVariables(debugger);
+        DebuggerPlaceFunctionInvisibleBreakpoints(debugger);
       }
     } break;
     case EXCEPTION_SINGLE_STEP: {
