@@ -16,8 +16,6 @@
 #include "source.cpp"
 #include "imgui_manager.cpp"
 
-// TODO: Why use hash to place breakpoints, use address lol
-
 void Test() {
   // TestLogAll("Hello", "World", 123, "Damn");
   // LOG(SHIT) << "SFJSDF" << 123;
@@ -25,8 +23,8 @@ void Test() {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    LOG(INFO) << "Specify process name\n";
+  if (argc < 3) {
+    LOG(INFO) << "Usage: <executable filename with pdb>, <main function name>\n";
     return 1;
   }
 
@@ -41,18 +39,17 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  Registers registers = {}; // To clear
+  Registers registers = {};
   LocalVariables local_variables;
   Source source;
   Breakpoints breakpoints;
 
-  Debugger debugger = CreateDebugger(&registers, &local_variables, &source, &breakpoints, argv[1], continue_event);
+  Debugger debugger = CreateDebugger(&registers, &local_variables, &source, &breakpoints, argv[1], argv[2], continue_event);
   ImGuiManager imgui_manager = CreateImGuiManager(&registers, &local_variables, &source, &breakpoints);
   debugger.OnLineAddressChange = [&](DWORD64 address) {
     imgui_manager.current_line_address = address;
   };
   imgui_manager.OnStepOver = [&]() {
-    // DebuggerStepOver(&debugger);
     DebuggerSetState(&debugger, DebuggerState::STEP_OVER);
     SetEvent(continue_event);
   };

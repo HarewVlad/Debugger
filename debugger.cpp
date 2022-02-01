@@ -2,6 +2,7 @@ static Debugger CreateDebugger(Registers *registers,
                                LocalVariables *local_variables, Source *source,
                                Breakpoints *breakpoints,
                                const std::string &process_name,
+                               const std::string &main_function_name,
                                HANDLE continue_event) {
   Debugger result = {};
 
@@ -25,6 +26,7 @@ static Debugger CreateDebugger(Registers *registers,
   result.local_variables = local_variables;
   result.source = source;
   result.breakpoints = breakpoints;
+  result.main_function_name = main_function_name;
 
   return result;
 }
@@ -178,14 +180,16 @@ inline DWORD64 DebuggetGetFunctionReturnAddress(CONTEXT context,
   return stack.AddrReturn.Offset;
 }
 
-inline DWORD64 DebuggerGetTargetStartAddress(HANDLE process, HANDLE thread) {
+inline DWORD64 DebuggerGetTargetStartAddress(Debugger *debugger) {
+  auto pi = debugger->pi;
+
   DWORD64 result = 0;
 
   SYMBOL_INFO *symbol;
   symbol = (SYMBOL_INFO *)new BYTE[sizeof(SYMBOL_INFO) + MAX_SYM_NAME];
   symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
   symbol->MaxNameLen = MAX_SYM_NAME;
-  SymFromName(process, "main", symbol);
+  SymFromName(pi.hProcess, debugger->main_function_name.c_str(), symbol);
 
   result = symbol->Address;
 
@@ -199,55 +203,61 @@ struct Function {
   DWORD64 end_address;
 };
 
-// TODO: Make function return false or true, just fill fields in here i guess.
-// Do it with other similar functions
-inline Function DebuggerGetFunctionInfo(Debugger *debugger, CONTEXT context) {
-  Function result = {};
-
+inline bool DebuggerGetFunctionInfo(Debugger *debugger, Function *function) {
+  auto context = debugger->original_context;
   auto pi = debugger->pi;
 
-  STACKFRAME64 stack = {};
-  stack.AddrPC.Offset = context.Eip;
-  stack.AddrPC.Mode = AddrModeFlat;
-  stack.AddrFrame.Offset = context.Ebp;
-  stack.AddrFrame.Mode = AddrModeFlat;
-  stack.AddrStack.Offset = context.Esp;
-  stack.AddrStack.Mode = AddrModeFlat;
-  if (!StackWalk64(IMAGE_FILE_MACHINE_I386, pi.hProcess, pi.hThread, &stack,
-                   &context, NULL, SymFunctionTableAccess64, SymGetModuleBase64,
-                   0)) {
-    return result;
-  }
+  // On x86 platform - FPO_DATA
+  // auto function_entry = (IMAGE_RUNTIME_FUNCTION_ENTRY *)stack.FuncTableEntry;
 
   PSYMBOL_INFO symbol_info =
       (PSYMBOL_INFO) new char[sizeof(SYMBOL_INFO) + MAX_SYM_NAME];
   symbol_info->MaxNameLen = MAX_SYM_NAME;
   symbol_info->SizeOfStruct = sizeof(SYMBOL_INFO);
   DWORD64 displacement;
-  SymFromAddr(pi.hProcess, stack.AddrPC.Offset, &displacement, symbol_info);
+  if (!SymFromAddr(pi.hProcess, context.Eip, &displacement, symbol_info)) {
+    LOG_IMGUI(DebuggerGetFunctionInfo,
+              "SymFromAddr failed, error = ", GetLastError())
+    return false;
+  }
 
-  result.start_address = stack.AddrPC.Offset;
-  result.end_address =
-      symbol_info->Address + symbol_info->Size - 4; // -4 is a fix
-  // TODO: If symbol_info->Size == 0, error
+  DWORD64 end_address_rough = symbol_info->Address + symbol_info->Size - 4;
 
-  return result;
+  // Locate the line, using this address
+  IMAGEHLP_LINE64 line = {};
+  line.SizeOfStruct = sizeof(line);
+
+  if (!SymGetLineFromAddr64(pi.hProcess, end_address_rough,
+                            (DWORD *)&displacement, &line)) {
+    LOG_IMGUI(DebuggerGetFunctionInfo,
+              "SymGetLineFromAddr64 failed, error = ", GetLastError())
+    return false;
+  }
+
+  function->start_address = symbol_info->Address;
+  function->end_address = line.Address;
+
+  return true;
 }
 
 inline void DebuggerPlaceFunctionInvisibleBreakpoints(Debugger *debugger) {
-  const auto source = debugger->source;
-  const auto &filename_to_lines = source->filename_to_lines;
-  const auto &address_to_line = source->address_to_line;
+  const auto &filename_to_lines = debugger->source->filename_to_lines;
+  const auto &address_to_line = debugger->source->address_to_line;
   auto &invisible_breakpoints = debugger->invisible_breakpoints.data;
   const auto &breakpoints = debugger->breakpoints->data;
-  auto context = debugger->original_context;
   auto pi = debugger->pi;
 
-  Function function_info = DebuggerGetFunctionInfo(debugger, context);
-  auto begin = address_to_line.find(function_info.start_address);
-  auto end = address_to_line.find(function_info.end_address);
+  Function function;
+  if (!DebuggerGetFunctionInfo(debugger, &function)) {
+    LOG_IMGUI(DebuggerPlaceFunctionInvisibleBreakpoints,
+              "Unable to get function info")
+    return;
+  }
+  auto begin = address_to_line.find(function.start_address);
+  auto end = address_to_line.find(function.end_address);
+  auto end_advanced = std::next(end, 1);
   if (end != address_to_line.end()) {
-    for (auto it = begin; it != end; ++it) {
+    for (auto it = begin; it != end_advanced; ++it) {
       if (breakpoints.find(it->first) != breakpoints.end()) {
         continue;
       }
@@ -295,7 +305,9 @@ inline BOOL WINAPI EnumLinesCallback(PSRCCODEINFO LineInfo, PVOID UserContext) {
   //                          &displacement, &line)) {
   // }
 
-  lines.emplace_back(Line{LineInfo->LineNumber, LineInfo->Address});
+  if (LineInfo->LineNumber != 0xf00f00) { // What?
+    lines.emplace_back(Line{LineInfo->LineNumber, LineInfo->Address});
+  }
 
   return TRUE;
 }
@@ -525,8 +537,7 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
     GetThreadContext(pi.hThread, &context);
 
     // Replace first instruction with int3
-    DWORD64 start_address =
-        DebuggerGetTargetStartAddress(pi.hProcess, pi.hThread);
+    DWORD64 start_address = DebuggerGetTargetStartAddress(debugger);
 
     const Line &line = address_to_line[start_address];
 
@@ -567,13 +578,8 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         DWORD64 exception_address =
             (DWORD64)exception_debug_info.ExceptionRecord.ExceptionAddress;
 
-        const Line &line = address_to_line[exception_address];
-
-        LOG_IMGUI(DebuggerProcessEvent, "Breakpoint at (", std::dec, line.index,
-                  ", ", std::hex, exception_address, ')');
-
         if (debugger->OnLineAddressChange) {
-          debugger->OnLineAddressChange(line.address);
+          debugger->OnLineAddressChange(exception_address);
         }
 
         CONTEXT context = {};
@@ -589,21 +595,22 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         context.EFlags |= 0x100; // Trap flag
         SetThreadContext(pi.hThread, &context);
 
-        // // I don't remember why it has been done =)
-        // #ifdef BREAKPOINT_END_ADDRESS
-        //         DWORD64 end_address =
-        //         DebuggetGetFunctionReturnAddress(context, pi); if
-        //         (invisible_breakpoints.find(end_address) ==
-        //             invisible_breakpoints.end()) {
-        //           invisible_breakpoints[end_address] =
-        //               CreateBreakpoint(pi.hProcess, end_address);
-        //         }
-        // #endif
         Breakpoint breakpoint = {};
+        bool is_invisible_breakpoint =
+            false; // TODO: Make 1 list of all breakpoints and add type enum
+                   // BreakpointType {USER, INVISIBLE}
         if (breakpoints.find(exception_address) != breakpoints.end()) {
           breakpoint = breakpoints[exception_address];
         } else {
           breakpoint = invisible_breakpoints[exception_address];
+          is_invisible_breakpoint = true;
+        }
+
+        const Line &line = address_to_line[exception_address];
+
+        if (!is_invisible_breakpoint) {
+          LOG_IMGUI(DebuggerProcessEvent, "Breakpoint at (", std::dec,
+                    line.index, ", ", std::hex, exception_address, ')');
         }
 
         BreakpointRestore(pi.hProcess, breakpoint);

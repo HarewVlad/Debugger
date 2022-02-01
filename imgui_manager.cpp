@@ -175,7 +175,13 @@ static inline void ImGuiLogDraw(ImGuiLog *imgui_log) {
 
 static inline void ImGuiLogAdd(ImGuiLog *imgui_log, const std::string &type,
                                const std::string &text) {
-  imgui_log->records.emplace_back(ImGuiLogRecord{type + ":", text});
+  auto &records = imgui_log->records;
+
+  records.emplace_back(ImGuiLogRecord{type + ":", text});
+
+  if (records.size() > IMGUI_LOG_MAX_SIZE) {
+    records.erase(records.begin());
+  }
 }
 
 static void ImGuiManagerDraw(ImGuiManager *imgui_manager) {

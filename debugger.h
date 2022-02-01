@@ -95,6 +95,7 @@ struct Debugger {
   HANDLE continue_event;
   std::function<void(DWORD64)> OnLineAddressChange;
   DebuggerState state;
+  std::string main_function_name; // TODO: Remove later
 
   // Local modules
   Breakpoints invisible_breakpoints;

@@ -87,7 +87,7 @@ inline bool Directx11CreateWindow(Directx11 *directx) {
   RegisterClassEx(&wc);
   window =
       CreateWindow(wc.lpszClassName, _T("Debugger"), WS_OVERLAPPEDWINDOW, 100,
-                   100, 1280, 800, NULL, NULL, wc.hInstance, NULL);
+                   100, WIDTH, HEIGHT, NULL, NULL, wc.hInstance, NULL);
   SetWindowLongPtr(window, GWLP_USERDATA, (LONG_PTR)directx); // For ImGui resize
 
   ShowWindow(window, SW_SHOWDEFAULT);
