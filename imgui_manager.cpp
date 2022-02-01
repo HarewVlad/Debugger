@@ -75,7 +75,9 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
         ImGui::SameLine();
 
         // Breakpoints
-        if (breakpoints.find(it->second[i].address) != breakpoints.end()) {
+        auto breakpoint_it = breakpoints.find(it->second[i].address);
+        if (breakpoint_it != breakpoints.end() &&
+            breakpoint_it->second.type == BreakpointType::USER) {
           // Draw red circle
           ImDrawList *draw_list = ImGui::GetWindowDrawList();
 
@@ -105,7 +107,8 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
                              ImGui::GetCursorPosY() - line_number_offset_y});
         ImGui::PushID(i);
         if (ImGui::Button(it->second[i].text.c_str())) {
-          if (breakpoints.find(it->second[i].address) != breakpoints.end()) {
+          if (breakpoint_it != breakpoints.end() &&
+              breakpoint_it->second.type == BreakpointType::USER) {
             if (imgui_manager->OnRemoveBreakpoint) {
               imgui_manager->OnRemoveBreakpoint(it->second[i].address);
             }

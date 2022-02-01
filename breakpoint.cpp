@@ -1,5 +1,5 @@
 // TODO: Mb redesign function return error codes
-static Breakpoint CreateBreakpoint(HANDLE process, DWORD64 address) {
+static Breakpoint CreateBreakpoint(HANDLE process, DWORD64 address, BreakpointType type) {
   Breakpoint result = {};
 
   BYTE instruction;
@@ -19,6 +19,7 @@ static Breakpoint CreateBreakpoint(HANDLE process, DWORD64 address) {
 
   result.original_instruction = original_instruction;
   result.address = address;
+  result.type = type;
 
   return result;
 }

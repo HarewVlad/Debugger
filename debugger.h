@@ -97,9 +97,6 @@ struct Debugger {
   DebuggerState state;
   std::string main_function_name; // TODO: Remove later
 
-  // Local modules
-  Breakpoints invisible_breakpoints;
-
   // External modules
   Registers *registers;
   LocalVariables *local_variables;
