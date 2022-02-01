@@ -475,7 +475,6 @@ static bool DebuggerSetBreakpoint(Debugger *debugger, DWORD64 address) {
 
   // TODO: Rethink lines that are not in debugger info
   if (!address) {
-    // Wrong address
     return false;
   }
 
@@ -486,11 +485,7 @@ static bool DebuggerSetBreakpoint(Debugger *debugger, DWORD64 address) {
   } else {
     breakpoints[address] =
         CreateBreakpoint(pi.hProcess, address, BreakpointType::USER);
-  } // else {
-  //   LOG_IMGUI(DebuggerSetBreakpoint, "Breakpoint for", address,
-  //             ", already present!")
-  //   return false;
-  // }
+  }
 
   return true;
 }
