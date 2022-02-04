@@ -599,7 +599,11 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
           RegistersUpdateFromContext(debugger->registers,
                                      debugger->original_context);
           DebuggerGetLocalVariables(debugger);
-          DebuggerPlaceFunctionInvisibleBreakpoints(debugger);
+
+          // I guess should be fine =)
+          if (it->second.type != BreakpointType::INVISIBLE) {
+            DebuggerPlaceFunctionInvisibleBreakpoints(debugger);
+          }
         }
       }
     } break;

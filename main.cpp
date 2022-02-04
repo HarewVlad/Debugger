@@ -75,6 +75,7 @@ int main(int argc, char **argv) {
       Directx11RenderBegin(directx);
       ImGuiManagerBeginDirectx11();
       ImGuiManagerDraw(&imgui_manager);
+      ImGuiManagerUpdate(&imgui_manager);
       ImGuiManagerEndDirectx11();
 
       if (FAILED(Directx11RenderEnd(directx)))

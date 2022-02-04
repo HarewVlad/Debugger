@@ -130,40 +130,6 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
   ImGui::End();
 }
 
-inline void ImGuiManagerDrawInterface(ImGuiManager *imgui_manager) {
-  static bool is_f5_pressed = false;
-  static bool is_f10_pressed = false;
-
-  ImGui::Begin("Interface");
-  if (ImGui::Button("Continue") ||
-      (GetAsyncKeyState(VK_F5) & 0x8000) && !is_f5_pressed) {
-    imgui_manager->OnContinue();
-
-    is_f5_pressed = true;
-  } else if (!(GetAsyncKeyState(VK_F5) & 0x8000)) {
-    is_f5_pressed = false;
-  }
-
-  if (ImGui::Button("Step over") ||
-      (GetAsyncKeyState(VK_F10) & 0x8000) && !is_f10_pressed) {
-    imgui_manager->OnStepOver();
-
-    is_f10_pressed = true;
-  } else if (!(GetAsyncKeyState(VK_F10) & 0x8000)) {
-    is_f10_pressed = false;
-  }
-
-  // if (ImGui::Button("Callstack")) {
-  //   imgui_manager->OnPrintCallstack();
-  // }
-
-  if (ImGui::Button("Exit") || (GetAsyncKeyState(VK_ESCAPE) & 0x8000)) {
-    Global_IsOpen = false;
-  }
-
-  ImGui::End();
-}
-
 static inline void ImGuiLogDraw(ImGuiLog *imgui_log) {
   const auto &records = imgui_log->records;
 
@@ -187,11 +153,34 @@ static inline void ImGuiLogAdd(ImGuiLog *imgui_log, const std::string &type,
   }
 }
 
+static void ImGuiManagerUpdate(ImGuiManager *imgui_manager) {
+  static bool is_f5_pressed = false;
+  static bool is_f10_pressed = false;
+
+  if ((GetAsyncKeyState(VK_F5) & 0x8000) && !is_f5_pressed) {
+    imgui_manager->OnContinue();
+
+    is_f5_pressed = true;
+  } else if (!(GetAsyncKeyState(VK_F5) & 0x8000)) {
+    is_f5_pressed = false;
+  }
+
+  if ((GetAsyncKeyState(VK_F10) & 0x8000) && !is_f10_pressed) {
+    imgui_manager->OnStepOver();
+
+    is_f10_pressed = true;
+  } else if (!(GetAsyncKeyState(VK_F10) & 0x8000)) {
+    is_f10_pressed = false;
+  }
+
+  if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
+    Global_IsOpen = false;
+  }
+}
+
 static void ImGuiManagerDraw(ImGuiManager *imgui_manager) {
   // static bool draw_demo = true;
   // ImGui::ShowDemoWindow(&draw_demo);
-
-  ImGuiManagerDrawInterface(imgui_manager);
   ImGuiDrawCode(imgui_manager);
   ImGuiLogDraw(&Global_ImGuiLog);
   ImGuiDrawRegisters(imgui_manager);
