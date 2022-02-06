@@ -156,6 +156,7 @@ static inline void ImGuiLogAdd(ImGuiLog *imgui_log, const std::string &type,
 static void ImGuiManagerUpdate(ImGuiManager *imgui_manager) {
   static bool is_f5_pressed = false;
   static bool is_f10_pressed = false;
+  static bool is_f11_pressed = false;
 
   if ((GetAsyncKeyState(VK_F5) & 0x8000) && !is_f5_pressed) {
     imgui_manager->OnContinue();
@@ -171,6 +172,14 @@ static void ImGuiManagerUpdate(ImGuiManager *imgui_manager) {
     is_f10_pressed = true;
   } else if (!(GetAsyncKeyState(VK_F10) & 0x8000)) {
     is_f10_pressed = false;
+  }
+
+  if ((GetAsyncKeyState(VK_F11) & 0x8000) && !is_f11_pressed) {
+    imgui_manager->OnStepIn();
+
+    is_f11_pressed = true;
+  } else if (!(GetAsyncKeyState(VK_F11) & 0x8000)) {
+    is_f11_pressed = false;
   }
 
   if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {

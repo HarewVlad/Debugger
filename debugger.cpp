@@ -203,8 +203,8 @@ struct Function {
   DWORD64 end_address;
 };
 
-inline bool DebuggerGetFunctionInfo(Debugger *debugger, Function *function) {
-  auto context = debugger->original_context;
+inline bool DebuggerGetFunctionInfo(Debugger *debugger, CONTEXT context,
+                                    Function *function) {
   auto pi = debugger->pi;
 
   // On x86 platform - FPO_DATA
@@ -240,14 +240,15 @@ inline bool DebuggerGetFunctionInfo(Debugger *debugger, Function *function) {
   return true;
 }
 
-inline void DebuggerPlaceFunctionInvisibleBreakpoints(Debugger *debugger) {
+inline void DebuggerPlaceFunctionInvisibleBreakpoints(Debugger *debugger,
+                                                      CONTEXT context) {
   const auto &filename_to_lines = debugger->source->filename_to_lines;
   const auto &address_to_line = debugger->source->address_to_line;
   auto &breakpoints = debugger->breakpoints->data;
   auto pi = debugger->pi;
 
   Function function;
-  if (!DebuggerGetFunctionInfo(debugger, &function)) {
+  if (!DebuggerGetFunctionInfo(debugger, context, &function)) {
     LOG_IMGUI(DebuggerPlaceFunctionInvisibleBreakpoints,
               "Unable to get function info")
     return;
@@ -580,42 +581,83 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         // occured, that means target instruction already been executed
         --context.Eip;
 
-        debugger->original_context = context;
-
         context.EFlags |= 0x100; // Trap flag
         SetThreadContext(pi.hThread, &context);
 
-        auto it = breakpoints.find(exception_address);
-        if (it != breakpoints.end()) {
+        debugger->original_context = context;
+
+        auto breakpoint_it = breakpoints.find(exception_address);
+        if (breakpoint_it != breakpoints.end()) {
           const Line &line = address_to_line[exception_address];
 
-          if (it->second.type != BreakpointType::INVISIBLE) {
+          BreakpointType type = breakpoint_it->second.type;
+          if (type != BreakpointType::INVISIBLE) {
             LOG_IMGUI(DebuggerProcessEvent, "Breakpoint at (", std::dec,
-                      line.index, ", ", std::hex, exception_address, ')');
+                      line.index, ", ", std::hex, line.address, ')');
           }
 
-          BreakpointRestore(pi.hProcess, it->second);
+          BreakpointRestore(pi.hProcess, breakpoint_it->second);
 
           RegistersUpdateFromContext(debugger->registers,
                                      debugger->original_context);
           DebuggerGetLocalVariables(debugger);
 
           // I guess should be fine =)
-          if (it->second.type != BreakpointType::INVISIBLE) {
-            DebuggerPlaceFunctionInvisibleBreakpoints(debugger);
+          if (type != BreakpointType::INVISIBLE) {
+            DebuggerPlaceFunctionInvisibleBreakpoints(
+                debugger, debugger->original_context);
           }
         }
       }
     } break;
     case EXCEPTION_SINGLE_STEP: {
-      // Reinstall exception if there is a breakpoint still
-      BreakpointRestore(pi.hProcess, debugger->original_context.Eip, 0xCC);
+      const EXCEPTION_DEBUG_INFO &exception_debug_info =
+          debug_event.u.Exception;
+      DWORD64 exception_address =
+          (DWORD64)exception_debug_info.ExceptionRecord.ExceptionAddress;
 
-      auto it = breakpoints.find(debugger->original_context.Eip);
-      if (debugger->state == DebuggerState::CONTINUE &&
-          it->second.type == BreakpointType::INVISIBLE) {
-      } else {
-        DebuggerWaitForAction(debugger);
+      const DebuggerState &state = debugger->state;
+      if (state !=
+          DebuggerState::STEP_IN) { // "NONE" state is when we start debugging
+        // Reinstall exception if there is a breakpoint still
+        BreakpointRestore(pi.hProcess, debugger->original_context.Eip, 0xCC);
+
+        auto it = breakpoints.find(debugger->original_context.Eip);
+        if (state != DebuggerState::CONTINUE) {
+          DebuggerWaitForAction(debugger);
+        } else if (it != breakpoints.end() &&
+                   it->second.type == BreakpointType::USER) {
+          DebuggerWaitForAction(debugger);
+        }
+      }
+
+      if (state == DebuggerState::STEP_IN) {
+        CONTEXT context = {};
+        context.ContextFlags = CONTEXT_ALL;
+        GetThreadContext(pi.hThread, &context);
+        context.EFlags |= 0x100; // Reinstall trap flag
+        SetThreadContext(pi.hThread, &context);
+
+        // NOTE: As Vladislav Nikishin suggested, do that, until line index
+        // changed
+        if (address_to_line.find(exception_address) != address_to_line.end()) {
+          if (debugger->OnLineAddressChange) {
+            debugger->OnLineAddressChange(exception_address);
+          }
+
+          auto it = breakpoints.find(exception_address);
+          if (it != breakpoints.end()) {
+            // I guess should be fine =)
+            if (it->second.type != BreakpointType::INVISIBLE) {
+              DebuggerPlaceFunctionInvisibleBreakpoints(debugger, context);
+            }
+          } else {
+            DebuggerPlaceFunctionInvisibleBreakpoints(debugger, context);
+          }
+
+          // TODO: Fix bug when need to press F10 x2 times after F11
+          DebuggerWaitForAction(debugger);
+        }
       }
     } break;
     default:

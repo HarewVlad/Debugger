@@ -64,6 +64,10 @@ int main(int argc, char **argv) {
     DebuggerSetState(&debugger, DebuggerState::CONTINUE);
     SetEvent(continue_event);
   };
+  imgui_manager.OnStepIn = [&]() {
+    DebuggerSetState(&debugger, DebuggerState::STEP_IN);
+    SetEvent(continue_event);
+  };
 
   std::thread thread([&]() {
     Directx11 *directx = CreateDirectx11();

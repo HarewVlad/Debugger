@@ -1,6 +1,7 @@
 enum class DebuggerState {
   NONE,
   STEP_OVER,
+  STEP_IN,
   CONTINUE
 };
 

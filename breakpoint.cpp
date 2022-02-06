@@ -1,12 +1,13 @@
 // TODO: Mb redesign function return error codes
-static Breakpoint CreateBreakpoint(HANDLE process, DWORD64 address, BreakpointType type) {
+static Breakpoint CreateBreakpoint(HANDLE process, DWORD64 address,
+                                   BreakpointType type) {
   Breakpoint result = {};
 
   BYTE instruction;
   DWORD read_bytes;
   if (!ReadProcessMemory(process, (void *)address, &instruction, 1,
                          &read_bytes)) {
-    LOG_IMGUI(DebuggerProcessEvent,
+    LOG_IMGUI(CreateBreakpoint,
               "ReadProcessMemory failed, error = ", GetLastError())
     return result;
   }
@@ -29,7 +30,7 @@ static inline bool BreakpointRestore(HANDLE process,
   DWORD read_bytes;
   if (!WriteProcessMemory(process, (void *)breakpoint.address,
                           &breakpoint.original_instruction, 1, &read_bytes)) {
-    LOG_IMGUI(DebuggerRestoreInstruction,
+    LOG_IMGUI(BreakpointRestore,
               "WriteProcessMemory failed, error = ", GetLastError())
     return false;
   }
@@ -43,7 +44,7 @@ static inline bool BreakpointRestore(HANDLE process, DWORD64 address,
   DWORD read_bytes;
   if (!WriteProcessMemory(process, (void *)address, &instruction, 1,
                           &read_bytes)) {
-    LOG_IMGUI(DebuggerRestoreInstruction,
+    LOG_IMGUI(BreakpointRestore,
               "WriteProcessMemory failed, error = ", GetLastError())
     return false;
   }

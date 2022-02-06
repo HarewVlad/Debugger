@@ -10,6 +10,7 @@ struct ImGuiLog {
 
 struct ImGuiManager {
   std::function<void()> OnStepOver;
+  std::function<void()> OnStepIn;
   std::function<void()> OnPrintCallstack;
   std::function<bool(DWORD64)> OnSetBreakpoint;
   std::function<bool(DWORD64)> OnRemoveBreakpoint;
