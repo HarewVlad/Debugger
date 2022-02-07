@@ -616,17 +616,15 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
       DWORD64 exception_address =
           (DWORD64)exception_debug_info.ExceptionRecord.ExceptionAddress;
 
-      const DebuggerState &state = debugger->state;
-      if (state !=
-          DebuggerState::STEP_IN) { // "NONE" state is when we start debugging
+      DebuggerState &state = debugger->state;
+      if (state != DebuggerState::STEP_IN) {
         // Reinstall exception if there is a breakpoint still
         BreakpointRestore(pi.hProcess, debugger->original_context.Eip, 0xCC);
 
         auto it = breakpoints.find(debugger->original_context.Eip);
-        if (state != DebuggerState::CONTINUE) {
-          DebuggerWaitForAction(debugger);
-        } else if (it != breakpoints.end() &&
-                   it->second.type == BreakpointType::USER) {
+        if (state != DebuggerState::CONTINUE ||
+            (it != breakpoints.end() &&
+             it->second.type == BreakpointType::USER)) {
           DebuggerWaitForAction(debugger);
         }
       }
@@ -646,17 +644,14 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
           }
 
           auto it = breakpoints.find(exception_address);
-          if (it != breakpoints.end()) {
-            // I guess should be fine =)
-            if (it->second.type != BreakpointType::INVISIBLE) {
-              DebuggerPlaceFunctionInvisibleBreakpoints(debugger, context);
-            }
-          } else {
+          if (it == breakpoints.end() ||
+              (it != breakpoints.end() &&
+               it->second.type != BreakpointType::INVISIBLE)) {
             DebuggerPlaceFunctionInvisibleBreakpoints(debugger, context);
           }
 
-          // TODO: Fix bug when need to press F10 x2 times after F11
-          DebuggerWaitForAction(debugger);
+          // To prevent infinite "Step-In" sequence
+          state = DebuggerState::NONE;
         }
       }
     } break;
