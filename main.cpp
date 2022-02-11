@@ -107,4 +107,6 @@ int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine,
 
   DebuggerRun(&debugger);
   thread.join();
+
+  return 0;
 }

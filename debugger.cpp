@@ -370,10 +370,14 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
             GetFilenameFromPath(debugger->source_files[i]);
 
         for (size_t j = 0; j < lines_corrected.size(); ++j) {
-          if (lines_corrected[j].address) // TODO: Rethink
+          if (lines_corrected[j].address) { // TODO: Rethink
             source->address_to_line[lines_corrected[j].address] =
                 lines_corrected[j];
+            source->line_address_to_filename[lines_corrected[j].address] = filename;
+          }
         }
+
+
         source->filename_to_lines.emplace(
             std::make_pair(std::move(filename), std::move(lines_corrected)));
       }

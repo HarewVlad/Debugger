@@ -18,6 +18,7 @@ static ImGuiManager CreateImGuiManager(Registers *registers,
   result.local_variables = local_variables;
   result.source = source;
   result.breakpoints = breakpoints;
+  result.previous_line_address = 0;
 
   return result;
 }
@@ -58,13 +59,30 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
   auto &breakpoints = imgui_manager->breakpoints->data;
   DWORD64 current_line_address = imgui_manager->current_line_address;
   const auto &filename_to_lines = imgui_manager->source->filename_to_lines;
+  const auto &line_address_to_filename =
+      imgui_manager->source->line_address_to_filename;
+  auto &previous_line_address = imgui_manager->previous_line_address;
 
   ImGui::Begin("Code");
   ImGui::BeginTabBar("Files");
 
+  int tab_button_index = 0;
   for (auto it = filename_to_lines.begin(); it != filename_to_lines.end();
-       ++it) {
-    if (ImGui::BeginTabItem(it->first.c_str())) {
+       ++it, ++tab_button_index) {
+    static int current_tab_button_index = 0;
+
+    if (previous_line_address != current_line_address) {
+      if (line_address_to_filename.find(current_line_address) !=
+              line_address_to_filename.end() &&
+          line_address_to_filename.at(current_line_address) == it->first) {
+        current_tab_button_index = tab_button_index;
+
+        previous_line_address = current_line_address;
+      }
+    }
+
+    if (ImGui::TabItemButton(it->first.c_str()) ||
+        current_tab_button_index == tab_button_index) {
       for (size_t i = 0; i < it->second.size(); ++i) {
         static const float circle_offset_x = 17.0f;
         static const float line_number_offset_y = 2.5f;
@@ -91,9 +109,9 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
         }
 
         // Draw cursor
-        float h = 4 / 7.0f;
+        float h = 0.571428f; // 4 / 7
         if (current_line_address == it->second[i].address) {
-          h = 8 / 7.0f;
+          h = 1.142857f; // 8 / 7
         }
 
         ImGui::PushStyleColor(ImGuiCol_Button,
@@ -121,8 +139,10 @@ inline void ImGuiDrawCode(ImGuiManager *imgui_manager) {
         ImGui::PopID();
         ImGui::PopStyleColor(3);
       }
+    }
 
-      ImGui::EndTabItem();
+    if (ImGui::IsItemActive()) {
+      current_tab_button_index = tab_button_index;
     }
   }
 

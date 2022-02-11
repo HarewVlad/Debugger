@@ -17,6 +17,7 @@ struct ImGuiManager {
   std::function<void()> OnContinue;
 
   DWORD64 current_line_address;
+  DWORD64 previous_line_address;
 
   // Modules
   Registers *registers;
