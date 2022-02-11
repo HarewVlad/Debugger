@@ -89,14 +89,14 @@ enum SymTagEnum {
 struct Source;
 
 struct Debugger {
-  STARTUPINFO si;
+  STARTUPINFOW si;
   PROCESS_INFORMATION pi;
   std::vector<std::string> source_files;
   CONTEXT original_context;
   HANDLE continue_event;
   std::function<void(DWORD64)> OnLineAddressChange;
   DebuggerState state;
-  std::string main_function_name; // TODO: Remove later
+  std::wstring main_function_name; // TODO: Remove later
 
   // External modules
   Registers *registers;

@@ -27,6 +27,7 @@
 #pragma comment(lib, "DbgHelp.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "D3D11.lib")
+#pragma comment(lib, "Shell32.lib")
 
 static bool Global_IsOpen = true;
 

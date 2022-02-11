@@ -1,14 +1,14 @@
 static Debugger CreateDebugger(Registers *registers,
                                LocalVariables *local_variables, Source *source,
                                Breakpoints *breakpoints,
-                               const std::string &process_name,
-                               const std::string &main_function_name,
+                               const std::wstring &process_name,
+                               const std::wstring &main_function_name,
                                HANDLE continue_event) {
   Debugger result = {};
 
-  STARTUPINFO si = {};
+  STARTUPINFOW si = {};
   PROCESS_INFORMATION pi = {};
-  if (!CreateProcessA(process_name.c_str(), NULL, NULL, NULL, FALSE,
+  if (!CreateProcessW(process_name.c_str(), NULL, NULL, NULL, FALSE,
                       DEBUG_ONLY_THIS_PROCESS, NULL, NULL, &si, &pi)) {
     LOG_IMGUI(CreateDebugger, "CreateProcesA failed, error = ", GetLastError())
     assert(false);
@@ -185,11 +185,11 @@ inline DWORD64 DebuggerGetTargetStartAddress(Debugger *debugger) {
 
   DWORD64 result = 0;
 
-  SYMBOL_INFO *symbol;
-  symbol = (SYMBOL_INFO *)new BYTE[sizeof(SYMBOL_INFO) + MAX_SYM_NAME];
+  SYMBOL_INFOW *symbol;
+  symbol = (SYMBOL_INFOW *)new BYTE[sizeof(SYMBOL_INFOW) + MAX_SYM_NAME];
   symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
   symbol->MaxNameLen = MAX_SYM_NAME;
-  SymFromName(pi.hProcess, debugger->main_function_name.c_str(), symbol);
+  SymFromNameW(pi.hProcess, debugger->main_function_name.c_str(), symbol);
 
   result = symbol->Address;
 

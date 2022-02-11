@@ -22,9 +22,15 @@ void Test() {
   // LOG_IMGUI(INFO, "Hello", 123);
 }
 
-int main(int argc, char **argv) {
+int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine,
+            int nShowCmd) {
+  LPWSTR command_line = GetCommandLineW();
+  int argc;
+  LPWSTR *argv = CommandLineToArgvW(command_line, &argc);
+
   if (argc < 3) {
-    LOG(INFO) << "Usage: <executable filename with pdb>, <main function name>\n";
+    LOG(INFO)
+        << "Usage: <executable filename with pdb>, <main function name>\n";
     return 1;
   }
 
@@ -44,8 +50,11 @@ int main(int argc, char **argv) {
   Source source;
   Breakpoints breakpoints;
 
-  Debugger debugger = CreateDebugger(&registers, &local_variables, &source, &breakpoints, argv[1], argv[2], continue_event);
-  ImGuiManager imgui_manager = CreateImGuiManager(&registers, &local_variables, &source, &breakpoints);
+  Debugger debugger =
+      CreateDebugger(&registers, &local_variables, &source, &breakpoints,
+                     argv[1], argv[2], continue_event);
+  ImGuiManager imgui_manager =
+      CreateImGuiManager(&registers, &local_variables, &source, &breakpoints);
   debugger.OnLineAddressChange = [&](DWORD64 address) {
     imgui_manager.current_line_address = address;
   };
