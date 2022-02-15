@@ -16,6 +16,8 @@ int main(int argc, char **argv) {
   // OutputDebugStringA("HELLO DUDE!");
   Function();
   Method(10, 20, 3.5f);
+  std::cout << "Yo";
+  std::cout << "Bro";
 
   {
     int a = Bar<int>(10, 10);

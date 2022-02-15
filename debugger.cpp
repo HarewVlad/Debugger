@@ -203,7 +203,7 @@ struct Function {
   DWORD64 end_address;
 };
 
-inline bool DebuggerGetFunctionInfo(Debugger *debugger, CONTEXT context,
+inline bool DebuggerGetFunctionInfo(Debugger *debugger, DWORD64 address,
                                     Function *function) {
   auto pi = debugger->pi;
 
@@ -215,7 +215,7 @@ inline bool DebuggerGetFunctionInfo(Debugger *debugger, CONTEXT context,
   symbol_info->MaxNameLen = MAX_SYM_NAME;
   symbol_info->SizeOfStruct = sizeof(SYMBOL_INFO);
   DWORD64 displacement;
-  if (!SymFromAddr(pi.hProcess, context.Eip, &displacement, symbol_info)) {
+  if (!SymFromAddr(pi.hProcess, address, &displacement, symbol_info)) {
     LOG_IMGUI(DebuggerGetFunctionInfo,
               "SymFromAddr failed, error = ", GetLastError())
     return false;
@@ -241,14 +241,14 @@ inline bool DebuggerGetFunctionInfo(Debugger *debugger, CONTEXT context,
 }
 
 inline void DebuggerPlaceFunctionInvisibleBreakpoints(Debugger *debugger,
-                                                      CONTEXT context) {
+                                                      DWORD64 address) {
   const auto &filename_to_lines = debugger->source->filename_to_lines;
   const auto &address_to_line = debugger->source->address_to_line;
   auto &breakpoints = debugger->breakpoints->data;
   auto pi = debugger->pi;
 
   Function function;
-  if (!DebuggerGetFunctionInfo(debugger, context, &function)) {
+  if (!DebuggerGetFunctionInfo(debugger, address, &function)) {
     LOG_IMGUI(DebuggerPlaceFunctionInvisibleBreakpoints,
               "Unable to get function info")
     return;
@@ -373,10 +373,10 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
           if (lines_corrected[j].address) { // TODO: Rethink
             source->address_to_line[lines_corrected[j].address] =
                 lines_corrected[j];
-            source->line_address_to_filename[lines_corrected[j].address] = filename;
+            source->line_address_to_filename[lines_corrected[j].address] =
+                filename;
           }
         }
-
 
         source->filename_to_lines.emplace(
             std::make_pair(std::move(filename), std::move(lines_corrected)));
@@ -508,6 +508,7 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
   auto pi = debugger->pi;
   auto &breakpoints = debugger->breakpoints->data;
   auto &address_to_line = debugger->source->address_to_line;
+  DebuggerState &state = debugger->state;
 
   continue_status = DBG_CONTINUE;
 
@@ -609,20 +610,24 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
           // I guess should be fine =)
           if (type != BreakpointType::INVISIBLE) {
             DebuggerPlaceFunctionInvisibleBreakpoints(
-                debugger, debugger->original_context);
+                debugger, debugger->original_context.Eip);
           }
+        }
+
+        // We hit breakpoint, so stop
+        if (state == DebuggerState::STEP_IN) {
+          state = DebuggerState::NONE;
         }
       }
     } break;
+    // TODO: Refactor
     case EXCEPTION_SINGLE_STEP: {
       const EXCEPTION_DEBUG_INFO &exception_debug_info =
           debug_event.u.Exception;
       DWORD64 exception_address =
           (DWORD64)exception_debug_info.ExceptionRecord.ExceptionAddress;
 
-      DebuggerState &state = debugger->state;
       if (state != DebuggerState::STEP_IN) {
-        // Reinstall exception if there is a breakpoint still
         BreakpointRestore(pi.hProcess, debugger->original_context.Eip, 0xCC);
 
         auto it = breakpoints.find(debugger->original_context.Eip);
@@ -634,15 +639,11 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
       }
 
       if (state == DebuggerState::STEP_IN) {
-        CONTEXT context = {};
-        context.ContextFlags = CONTEXT_ALL;
-        GetThreadContext(pi.hThread, &context);
-        context.EFlags |= 0x100; // Reinstall trap flag
-        SetThreadContext(pi.hThread, &context);
-
         // NOTE: As Vladislav Nikishin suggested, do that, until line index
         // changed
         if (address_to_line.find(exception_address) != address_to_line.end()) {
+          // TODO: Check mod base to determite whether line is loaded or not
+
           if (debugger->OnLineAddressChange) {
             debugger->OnLineAddressChange(exception_address);
           }
@@ -651,11 +652,18 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
           if (it == breakpoints.end() ||
               (it != breakpoints.end() &&
                it->second.type != BreakpointType::INVISIBLE)) {
-            DebuggerPlaceFunctionInvisibleBreakpoints(debugger, context);
+            DebuggerPlaceFunctionInvisibleBreakpoints(debugger,
+                                                      exception_address);
           }
 
           // To prevent infinite "Step-In" sequence
           state = DebuggerState::NONE;
+        } else {
+          CONTEXT context = {};
+          context.ContextFlags = CONTEXT_ALL;
+          GetThreadContext(pi.hThread, &context);
+          context.EFlags |= 0x100; // Reinstall trap flag
+          SetThreadContext(pi.hThread, &context);
         }
       }
     } break;
