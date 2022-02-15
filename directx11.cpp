@@ -90,7 +90,7 @@ inline bool Directx11CreateWindow(Directx11 *directx) {
                    100, WIDTH, HEIGHT, NULL, NULL, wc.hInstance, NULL);
   SetWindowLongPtr(window, GWLP_USERDATA, (LONG_PTR)directx); // For ImGui resize
 
-  ShowWindow(window, SW_SHOWDEFAULT);
+  ShowWindow(window, SW_MAXIMIZE);
   UpdateWindow(window);
 
   return true;

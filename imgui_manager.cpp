@@ -159,6 +159,11 @@ static inline void ImGuiLogDraw(ImGuiLog *imgui_log) {
     ImGui::SameLine();
     ImGui::Text(records[i].message.c_str());
   }
+
+  if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+    ImGui::SetScrollHereY(1.0f);
+  }
+  
   ImGui::End();
 }
 

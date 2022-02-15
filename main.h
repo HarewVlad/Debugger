@@ -19,9 +19,9 @@
 #include <initializer_list>
 
 #define BUFSIZE 512
-#define IMGUI_LOG_MAX_SIZE 150
-#define WIDTH 1920
-#define HEIGHT 1080
+#define IMGUI_LOG_MAX_SIZE 300
+#define WIDTH 1024
+#define HEIGHT 720
 
 #pragma comment(lib, "User32.lib")
 #pragma comment(lib, "DbgHelp.lib")
