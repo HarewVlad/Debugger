@@ -642,8 +642,6 @@ static bool DebuggerProcessEvent(Debugger *debugger, DEBUG_EVENT debug_event,
         // NOTE: As Vladislav Nikishin suggested, do that, until line index
         // changed
         if (address_to_line.find(exception_address) != address_to_line.end()) {
-          // TODO: Check mod base to determite whether line is loaded or not
-
           if (debugger->OnLineAddressChange) {
             debugger->OnLineAddressChange(exception_address);
           }
