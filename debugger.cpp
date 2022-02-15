@@ -207,9 +207,6 @@ inline bool DebuggerGetFunctionInfo(Debugger *debugger, DWORD64 address,
                                     Function *function) {
   auto pi = debugger->pi;
 
-  // On x86 platform - FPO_DATA
-  // auto function_entry = (IMAGE_RUNTIME_FUNCTION_ENTRY *)stack.FuncTableEntry;
-
   PSYMBOL_INFO symbol_info =
       (PSYMBOL_INFO) new char[sizeof(SYMBOL_INFO) + MAX_SYM_NAME];
   symbol_info->MaxNameLen = MAX_SYM_NAME;
@@ -286,7 +283,6 @@ struct EnumLinesCallbackData {
 };
 
 inline BOOL WINAPI EnumLinesCallback(PSRCCODEINFO LineInfo, PVOID UserContext) {
-  // auto lines = reinterpret_cast<std::vector<Line> *>(UserContext);
   auto data = reinterpret_cast<EnumLinesCallbackData *>(UserContext);
   auto pi = data->pi;
   auto &lines = data->lines;
@@ -340,11 +336,7 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
                          EnumSourceFilesCallback, debugger);
 
       for (int i = 0; i < debugger->source_files.size(); ++i) {
-        EnumLinesCallbackData data = {debugger->pi};
-        SymEnumLines(pi.hProcess, base, NULL, debugger->source_files[i].c_str(),
-                     EnumLinesCallback, (PVOID)&data);
-
-        // Load text
+        // Check if it can be opened
         std::ifstream file(debugger->source_files[i]);
         if (!file.is_open()) {
           LOG_IMGUI(INFO, "Unable to open source file ",
@@ -352,12 +344,19 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
           continue;
         }
 
+        // Load lines info
+        EnumLinesCallbackData data = {debugger->pi};
+        SymEnumLines(pi.hProcess, base, NULL, debugger->source_files[i].c_str(),
+                     EnumLinesCallback, (PVOID)&data);
+
+        // Load lines text
         std::string line;
         std::vector<Line> lines_corrected;
         for (size_t j = 0; std::getline(file, line); ++j) {
           lines_corrected.emplace_back(Line{0, 0, std::move(line)});
         }
 
+        // Correct debug lines with just lines with text
         const auto &debug_lines = data.lines;
         for (size_t j = 0; j < debug_lines.size(); ++j) {
           DWORD index = debug_lines[j].index;
@@ -369,6 +368,7 @@ inline bool DebuggerLoadTargetModules(Debugger *debugger, HANDLE file,
         const std::string filename =
             GetFilenameFromPath(debugger->source_files[i]);
 
+        // Additional info
         for (size_t j = 0; j < lines_corrected.size(); ++j) {
           if (lines_corrected[j].address) { // TODO: Rethink
             source->address_to_line[lines_corrected[j].address] =
