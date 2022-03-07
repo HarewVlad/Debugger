@@ -1,8 +1,7 @@
 # Debugger
 ![](debugger.png)  
 # About
-Just demo debugger that i wrote  
-Issues a lot still need to fix  
+Just a demo debugger 
 # Features
 1. Support x86 for now  
 2. Doesn't have the ability to look into std::count and stuff  
